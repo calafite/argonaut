@@ -3,12 +3,6 @@ use std::fmt::Display;
 
 pub struct Ui;
 
-impl Ui {}
-use colored::Colorize;
-use std::fmt::Display;
-
-pub struct Ui;
-
 impl Ui {
     pub fn section<S: Display>(title: S) {
         println!(
