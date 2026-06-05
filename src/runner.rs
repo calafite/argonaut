@@ -62,7 +62,7 @@ impl Runner {
                 if n == 0 {
                     break;
                 }
-                let _ = out.write_all(b"\x1b[36m");
+                let _ = out.write_all(b"\x1b[1;96m");
                 let _ = out.write_all(&buf[..n]);
                 let _ = out.write_all(b"\x1b[0m");
                 let _ = out.flush();
@@ -76,7 +76,7 @@ impl Runner {
                 if n == 0 {
                     break;
                 }
-                let _ = err.write_all(b"\x1b[31m");
+                let _ = err.write_all(b"\x1b[1;91m");
                 let _ = err.write_all(&buf[..n]);
                 let _ = err.write_all(b"\x1b[0m");
                 let _ = err.flush();
