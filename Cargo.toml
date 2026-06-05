@@ -13,3 +13,6 @@ clap = {version = "*", features = ["derive"] }
 colored = "*"
 inquire = "*"
 notify = "*"
+serde = "*"
+toml = "*"
+directories = "*"

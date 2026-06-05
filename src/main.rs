@@ -1,5 +1,6 @@
 mod cli;
 mod compiler;
+mod config;
 mod runner;
 mod scaffold;
 mod ui;
@@ -9,6 +10,7 @@ use anyhow::Result;
 use clap::Parser;
 use cli::{Cli, Commands};
 use compiler::Compiler;
+use config::Config;
 use runner::Runner;
 use scaffold::Scaffold;
 use ui::Ui;
@@ -17,8 +19,10 @@ use watcher::Watcher;
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    let config = Config::load()?;
+
     match cli.command {
-        Commands::Tcomp {
+        Commands::Comp {
             file,
             input,
             no_input,
@@ -31,7 +35,7 @@ fn main() -> Result<()> {
             Ui::section("Running Program");
             Runner::run(&binary, use_file)?;
         }
-        Commands::Dbg {
+        Commands::Debug {
             file,
             input,
             no_input,
@@ -53,7 +57,7 @@ fn main() -> Result<()> {
             Ui::section("Running Program");
             Runner::run(&binary, use_file)?;
         }
-        Commands::Watchcp {
+        Commands::Watch {
             file,
             input,
             no_input,
@@ -63,7 +67,7 @@ fn main() -> Result<()> {
         }
         Commands::Mkcp { dir, name } => {
             Ui::section("Project Scaffold");
-            Scaffold::create(&dir, &name)?;
+            Scaffold::create(&dir, &name, &config)?;
         }
     }
 
