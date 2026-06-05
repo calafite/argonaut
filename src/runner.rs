@@ -9,20 +9,25 @@ use std::time::Instant;
 pub struct Runner;
 
 impl Runner {
-    pub fn run(binary: &Path, force_input: bool, force_no_input: bool) -> Result<()> {
-        let mut use_file = false;
+    pub fn resolve_input(force_input: bool, force_no_input: bool) -> Result<bool> {
         let input_file = Path::new("input.txt");
 
         if force_input {
-            use_file = true;
+            Ok(true)
         } else if force_no_input {
-            use_file = false;
+            Ok(false)
         } else if input_file.exists() {
-            use_file = Confirm::new("Found input.txt. Use it for stdin?")
+            let choice = Confirm::new("Found input.txt. Use it for stdin?")
                 .with_default(true)
                 .prompt()?;
+            Ok(choice)
+        } else {
+            Ok(false)
         }
+    }
 
+    pub fn run(binary: &Path, use_file: bool) -> Result<()> {
+        let input_file = Path::new("input.txt");
         let mut child_cmd = Command::new(binary);
 
         if use_file {

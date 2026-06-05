@@ -34,11 +34,6 @@ pub enum Commands {
         #[arg(long)]
         no_input: bool,
     },
-    /// Rebuild and run on every save
-    Watchcp {
-        /// The C++ source file
-        file: PathBuf,
-    },
     /// Scaffold a new solution file
     Mkcp {
         /// Directory to create
@@ -51,6 +46,17 @@ pub enum Commands {
     Run {
         /// The compiled binary
         binary: PathBuf,
+        /// Force read from input.txt (bypasses prompt)
+        #[arg(long, conflicts_with = "no_input")]
+        input: bool,
+        /// Force interactive stdin (bypasses prompt)
+        #[arg(long)]
+        no_input: bool,
+    },
+    /// Rebuild and run on every save
+    Watchcp {
+        /// The C++ source file
+        file: PathBuf,
         /// Force read from input.txt (bypasses prompt)
         #[arg(long, conflicts_with = "no_input")]
         input: bool,
