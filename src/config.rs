@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 #[derive(Deserialize, Default, Debug)]
 pub struct Config {
+    #[serde(default)]
     pub scaffold: ScaffoldConfig,
 }
 
