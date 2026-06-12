@@ -9,7 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "*"
-clap = {version = "*", features = ["derive"] }
+clap = { version = "*", features = ["derive"] }
 colored = "*"
 inquire = "*"
 notify = "*"
