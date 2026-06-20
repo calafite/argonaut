@@ -34,9 +34,13 @@ impl Bundler {
             .canonicalize()
             .with_context(|| format!("Could not find file: {}", file.display()))?;
 
+        // Phase 1: Parse all reachable files
         self.load_graph(&abs_path)?;
+
+        // Phase 2: Resolve which files are actually used (Tree-Shaking)
         self.tree_shake(&abs_path);
 
+        // Phase 3: Assemble the final bundled file
         Ok(self.assemble(&abs_path))
     }
 
@@ -96,9 +100,10 @@ impl Bundler {
 
             for (path, file) in &self.parsed_files {
                 if self.active_files.contains(path) {
-                    continue; // Already active
+                    continue; 
                 }
 
+                // Check if it's `#include`d by ANY active file
                 let included_by_active = current_active
                     .iter()
                     .any(|act| self.parsed_files[act].local_includes.contains(path));
@@ -107,10 +112,12 @@ impl Bundler {
                     continue;
                 }
 
+                // If the file acts just as an umbrella or provides utility macros
                 if file.provided_symbols.is_empty() {
                     self.active_files.insert(path.clone());
                     changed = true;
                 } else {
+                    // It defines structures/classes. Check if ANY active file uses ANY of them.
                     let is_used = file.provided_symbols.iter().any(|sym| {
                         current_active
                             .iter()
@@ -131,6 +138,7 @@ impl Bundler {
     }
 
     fn assemble(&mut self, root: &Path) -> String {
+        // Hoist all system includes from ACTIVE files to the very top
         let mut all_sys_includes: Vec<String> = Vec::new();
         for path in &self.active_files {
             if let Some(parsed) = self.parsed_files.get(path) {
@@ -151,9 +159,12 @@ impl Bundler {
             out.push('\n');
         }
 
+        // Inline only the active local includes
         let mut emitted = HashSet::new();
         self.assemble_file(root, &mut emitted, &mut out);
 
+        // Optional format cleanups
+        out = out.replace("\n\n\n", "\n\n");
         out
     }
 
@@ -167,7 +178,7 @@ impl Bundler {
         for line in parsed.content.lines() {
             let trimmed = line.trim();
             if trimmed.starts_with("#pragma once") {
-                continue;
+                continue; 
             }
 
             if let Some(inc) = parse_include(trimmed) {
@@ -192,14 +203,14 @@ impl Bundler {
         if inc.is_quote {
             let candidate = current_dir.join(&inc.path);
             if candidate.exists() {
-                return candidate.canonicalize().ok();
+                return candidate.canonicalize().ok().or_else(|| Some(candidate));
             }
         }
 
         for dir in &self.include_dirs {
             let candidate = dir.join(&inc.path);
             if candidate.exists() {
-                return candidate.canonicalize().ok();
+                return candidate.canonicalize().ok().or_else(|| Some(candidate));
             }
         }
 
@@ -214,28 +225,18 @@ struct Include {
 
 fn parse_include(line: &str) -> Option<Include> {
     let s = line.trim();
-    if !s.starts_with('#') {
-        return None;
-    }
+    if !s.starts_with('#') { return None; }
     let s = s[1..].trim();
-    if !s.starts_with("include") {
-        return None;
-    }
+    if !s.starts_with("include") { return None; }
     let s = s[7..].trim();
 
     if s.starts_with('"') {
         if let Some(end) = s[1..].find('"') {
-            return Some(Include {
-                path: s[1..=end].to_string(),
-                is_quote: true,
-            });
+            return Some(Include { path: s[1..=end].to_string(), is_quote: true });
         }
     } else if s.starts_with('<') {
         if let Some(end) = s[1..].find('>') {
-            return Some(Include {
-                path: s[1..=end].to_string(),
-                is_quote: false,
-            });
+            return Some(Include { path: s[1..=end].to_string(), is_quote: false });
         }
     }
     None
@@ -243,23 +244,37 @@ fn parse_include(line: &str) -> Option<Include> {
 
 fn extract_symbols(content: &str) -> Vec<String> {
     let mut symbols = Vec::new();
-    let tokens: Vec<&str> = content
-        .split(|c: char| !c.is_alphanumeric() && c != '_')
-        .filter(|s| !s.is_empty())
-        .collect();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("#include") {
+            continue; 
+        }
+        let tokens: Vec<&str> = trimmed
+            .split(|c: char| !c.is_alphanumeric() && c != '_')
+            .filter(|s| !s.is_empty())
+            .collect();
 
-    for i in 0..tokens.len().saturating_sub(1) {
-        if (tokens[i] == "struct" || tokens[i] == "class") && tokens[i + 1] != "{" {
-            symbols.push(tokens[i + 1].to_string());
+        for i in 0..tokens.len().saturating_sub(1) {
+            if (tokens[i] == "struct" || tokens[i] == "class") && tokens[i + 1] != "{" {
+                symbols.push(tokens[i + 1].to_string());
+            }
         }
     }
     symbols
 }
 
 fn extract_all_tokens(content: &str) -> HashSet<String> {
-    content
-        .split(|c: char| !c.is_alphanumeric() && c != '_')
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-        .collect()
+    let mut tokens = HashSet::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("#include") {
+            continue; // Prevent pulling library files due to structurally matching paths
+        }
+        for token in trimmed.split(|c: char| !c.is_alphanumeric() && c != '_') {
+            if !token.is_empty() {
+                tokens.insert(token.to_string());
+            }
+        }
+    }
+    tokens
 }

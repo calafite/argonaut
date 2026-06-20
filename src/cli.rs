@@ -19,6 +19,8 @@ pub enum Commands {
         input: bool,
         #[arg(long)]
         no_input: bool,
+        #[arg(short = 'I', long = "include")]
+        include_dirs: Vec<String>,
     },
     /// Compile (debug mode, sanitizers) and run
     Debug {
@@ -27,6 +29,8 @@ pub enum Commands {
         input: bool,
         #[arg(long)]
         no_input: bool,
+        #[arg(short = 'I', long = "include")]
+        include_dirs: Vec<String>,
     },
     /// Rebuild and run on every save
     Watch {
@@ -35,6 +39,8 @@ pub enum Commands {
         input: bool,
         #[arg(long)]
         no_input: bool,
+        #[arg(short = 'I', long = "include")]
+        include_dirs: Vec<String>,
     },
     /// Scaffold a new solution file
     Mkcp {
@@ -55,5 +61,7 @@ pub enum Commands {
         file: PathBuf,
         #[arg(short, long)]
         out: Option<PathBuf>,
+        #[arg(short = 'I', long = "include")]
+        include_dirs: Vec<String>,
     },
 }
