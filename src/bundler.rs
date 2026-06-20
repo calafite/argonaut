@@ -244,19 +244,19 @@ fn parse_include(line: &str) -> Option<Include> {
 
 fn extract_symbols(content: &str) -> Vec<String> {
     let mut symbols = Vec::new();
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("#include") {
-            continue; 
-        }
-        let tokens: Vec<&str> = trimmed
-            .split(|c: char| !c.is_alphanumeric() && c != '_')
-            .filter(|s| !s.is_empty())
-            .collect();
+    
+    let tokens: Vec<&str> = content
+        .lines()
+        .filter(|l| !l.trim().starts_with("#include"))
+        .flat_map(|l| l.split(|c: char| !c.is_alphanumeric() && c != '_'))
+        .filter(|s| !s.is_empty())
+        .collect();
 
-        for i in 0..tokens.len().saturating_sub(1) {
-            if (tokens[i] == "struct" || tokens[i] == "class") && tokens[i + 1] != "{" {
-                symbols.push(tokens[i + 1].to_string());
+    for i in 0..tokens.len().saturating_sub(1) {
+        if tokens[i] == "struct" || tokens[i] == "class" {
+            let next = tokens[i + 1];
+            if next != "public" && next != "private" {
+                symbols.push(next.to_string());
             }
         }
     }
@@ -264,17 +264,11 @@ fn extract_symbols(content: &str) -> Vec<String> {
 }
 
 fn extract_all_tokens(content: &str) -> HashSet<String> {
-    let mut tokens = HashSet::new();
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("#include") {
-            continue; // Prevent pulling library files due to structurally matching paths
-        }
-        for token in trimmed.split(|c: char| !c.is_alphanumeric() && c != '_') {
-            if !token.is_empty() {
-                tokens.insert(token.to_string());
-            }
-        }
-    }
-    tokens
+    content
+        .lines()
+        .filter(|l| !l.trim().starts_with("#include"))
+        .flat_map(|l| l.split(|c: char| !c.is_alphanumeric() && c != '_'))
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect()
 }

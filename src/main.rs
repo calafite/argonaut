@@ -31,16 +31,37 @@ fn get_include_dirs(cli_includes: &[String], config: &Config, file: &Path) -> Ve
         dirs.push(Config::expand_path(inc));
     }
 
+    // Resolve absolute paths to guarantee parent detection works
+    let abs_file = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
+    
     // Auto-detect a local `include` directory next to the target file
-    if let Some(parent) = file.parent() {
-        let local_include = parent.join("include");
-        if local_include.exists() {
-            dirs.push(local_include.canonicalize().unwrap_or(local_include));
+    if let Some(parent) = abs_file.parent() {
+        let parent_include = parent.join("include");
+        if parent_include.exists() {
+            dirs.push(parent_include);
         }
-        dirs.push(parent.canonicalize().unwrap_or(parent.to_path_buf()));
+        dirs.push(parent.to_path_buf());
     }
     
-    dirs
+    // Auto-detect `include` directory from the terminal's Current Working Directory
+    if let Ok(cwd) = std::env::current_dir() {
+        let cwd_include = cwd.join("include");
+        if cwd_include.exists() {
+            dirs.push(cwd_include);
+        }
+        dirs.push(cwd);
+    }
+    
+    // Deduplicate to prevent overlapping scans
+    let mut resolved = Vec::new();
+    for d in dirs {
+        let canon = d.canonicalize().unwrap_or(d);
+        if !resolved.contains(&canon) {
+            resolved.push(canon);
+        }
+    }
+    
+    resolved
 }
 
 fn main() -> Result<()> {
