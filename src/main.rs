@@ -96,17 +96,17 @@ fn main() -> Result<()> {
                 .iter()
                 .map(|p| Config::expand_path(p))
                 .collect();
-                
+
             Ui::section("Bundler");
             Ui::meta("source", file.display());
             let mut bundler = Bundler::new(include_dirs);
             let bundled = bundler.bundle(&file)?;
-            
+
             let out_path = out.unwrap_or_else(|| {
                 let stem = file.file_stem().unwrap_or_default().to_string_lossy();
                 file.with_file_name(format!("{}_bundled.cpp", stem))
             });
-            
+
             std::fs::write(&out_path, bundled)?;
             Ui::ok(format!("Bundled to {}", out_path.display()));
         }
