@@ -50,4 +50,10 @@ pub enum Commands {
         #[arg(long)]
         no_input: bool,
     },
+    /// Bundle a solution file into a single monolithic file
+    Bundle {
+        file: PathBuf,
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+    },
 }

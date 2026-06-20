@@ -3,7 +3,7 @@ use crate::runner::Runner;
 use crate::ui::Ui;
 use anyhow::{Result, anyhow};
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher as NotifyWatcher};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::channel;
 use std::time::{Duration, Instant};
 
@@ -14,7 +14,7 @@ impl Watcher {
         print!("{esc}[2J{esc}[1;1H", esc = 27 as char);
     }
 
-    pub fn watch(file: &Path, use_file: bool) -> Result<()> {
+    pub fn watch(file: &Path, use_file: bool, include_dirs: &[PathBuf]) -> Result<()> {
         let file = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
         let parent_dir = file.parent().ok_or_else(|| anyhow!("Invalid file path"))?;
         let file_name = file
@@ -32,7 +32,7 @@ impl Watcher {
             file.display()
         ));
 
-        if let Ok(binary) = Compiler::build(&file, true) {
+        if let Ok(binary) = Compiler::build(&file, true, include_dirs) {
             let _ = Runner::run(&binary, use_file);
         }
 
@@ -42,7 +42,6 @@ impl Watcher {
         loop {
             match rx.recv() {
                 Ok(Ok(event)) => {
-                    // Check if the event involves our specific file
                     let involves_our_file =
                         event.paths.iter().any(|p| p.file_name() == Some(file_name));
 
@@ -55,7 +54,7 @@ impl Watcher {
                         Self::clear_screen();
                         Ui::info("file changed — recompiling...");
 
-                        if let Ok(binary) = Compiler::build(&file, true) {
+                        if let Ok(binary) = Compiler::build(&file, true, include_dirs) {
                             let _ = Runner::run(&binary, use_file);
                         }
                     }

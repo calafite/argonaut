@@ -42,10 +42,15 @@ impl Compiler {
         })
     }
 
-    pub fn build(file: &Path, debug: bool) -> Result<PathBuf> {
+    pub fn build(file: &Path, debug: bool, include_dirs: &[PathBuf]) -> Result<PathBuf> {
         let cache_dir = Self::setup_cache()?;
         let file_stem = file.file_stem().unwrap_or_default().to_string_lossy();
         let out_bin = cache_dir.join(format!("{}.out", file_stem));
+
+        let include_args: Vec<String> = include_dirs
+            .iter()
+            .flat_map(|dir| vec!["-I".to_string(), dir.to_string_lossy().into_owned()])
+            .collect();
 
         let mut args = vec![
             "-std=c++20",
@@ -55,6 +60,9 @@ impl Compiler {
             "-DLOCAL",
             "-fdiagnostics-color=always",
         ];
+
+        let include_args_refs: Vec<&str> = include_args.iter().map(|s| s.as_str()).collect();
+        args.extend(include_args_refs);
 
         if debug {
             args.extend(&["-g", "-O1"]);

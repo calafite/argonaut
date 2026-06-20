@@ -8,11 +8,19 @@ use std::path::PathBuf;
 pub struct Config {
     #[serde(default)]
     pub scaffold: ScaffoldConfig,
+    #[serde(default)]
+    pub build: BuildConfig,
 }
 
 #[derive(Deserialize, Default, Debug)]
 pub struct ScaffoldConfig {
     pub template_path: Option<String>,
+}
+
+#[derive(Deserialize, Default, Debug)]
+pub struct BuildConfig {
+    #[serde(default)]
+    pub include_dirs: Vec<String>,
 }
 
 impl Config {
