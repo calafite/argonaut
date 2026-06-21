@@ -34,13 +34,8 @@ impl Bundler {
             .canonicalize()
             .with_context(|| format!("Could not find file: {}", file.display()))?;
 
-        // Phase 1: Parse all reachable files
         self.load_graph(&abs_path)?;
-
-        // Phase 2: Resolve which files are actually used (Tree-Shaking)
         self.tree_shake(&abs_path);
-
-        // Phase 3: Assemble the final bundled file
         Ok(self.assemble(&abs_path))
     }
 
@@ -108,10 +103,9 @@ impl Bundler {
 
             for (path, file) in &self.parsed_files {
                 if self.active_files.contains(path) {
-                    continue; 
+                    continue;
                 }
 
-                // Check if it's `#include`d by ANY active file
                 let included_by_active = current_active
                     .iter()
                     .any(|act| self.parsed_files[act].local_includes.contains(path));
@@ -120,12 +114,10 @@ impl Bundler {
                     continue;
                 }
 
-                // If the file acts just as an umbrella or provides utility macros
                 if file.provided_symbols.is_empty() {
                     self.active_files.insert(path.clone());
                     changed = true;
                 } else {
-                    // It defines structures/classes. Check if ANY active file uses ANY of them.
                     let is_used = file.provided_symbols.iter().any(|sym| {
                         current_active
                             .iter()
@@ -146,7 +138,6 @@ impl Bundler {
     }
 
     fn assemble(&mut self, root: &Path) -> String {
-        // Hoist all system includes from ACTIVE files to the very top
         let mut all_sys_includes: Vec<String> = Vec::new();
         for path in &self.active_files {
             if let Some(parsed) = self.parsed_files.get(path) {
@@ -167,11 +158,9 @@ impl Bundler {
             out.push('\n');
         }
 
-        // Inline only the active local includes
         let mut emitted = HashSet::new();
         self.assemble_file(root, &mut emitted, &mut out);
 
-        // Optional format cleanups
         out = out.replace("\n\n\n", "\n\n");
         out
     }
@@ -186,7 +175,7 @@ impl Bundler {
         for line in parsed.content.lines() {
             let trimmed = line.trim();
             if trimmed.starts_with("#pragma once") {
-                continue; 
+                continue;
             }
 
             if let Some(inc) = parse_include(trimmed) {
@@ -194,8 +183,6 @@ impl Bundler {
                     if self.active_files.contains(&resolved) {
                         self.assemble_file(&resolved, emitted, out);
                     } else {
-                        // Tree-shaking excluded this file; preserve the include so the
-                        // bundled file still compiles if the tree-shaker was wrong.
                         out.push_str(line);
                         out.push('\n');
                     }
@@ -238,18 +225,28 @@ struct Include {
 
 fn parse_include(line: &str) -> Option<Include> {
     let s = line.trim();
-    if !s.starts_with('#') { return None; }
+    if !s.starts_with('#') {
+        return None;
+    }
     let s = s[1..].trim();
-    if !s.starts_with("include") { return None; }
+    if !s.starts_with("include") {
+        return None;
+    }
     let s = s[7..].trim();
 
     if s.starts_with('"') {
         if let Some(end) = s[1..].find('"') {
-            return Some(Include { path: s[1..=end].to_string(), is_quote: true });
+            return Some(Include {
+                path: s[1..=end].to_string(),
+                is_quote: true,
+            });
         }
     } else if s.starts_with('<') {
         if let Some(end) = s[1..].find('>') {
-            return Some(Include { path: s[1..=end].to_string(), is_quote: false });
+            return Some(Include {
+                path: s[1..=end].to_string(),
+                is_quote: false,
+            });
         }
     }
     None
@@ -257,7 +254,7 @@ fn parse_include(line: &str) -> Option<Include> {
 
 fn extract_symbols(content: &str) -> Vec<String> {
     let mut symbols = Vec::new();
-    
+
     let tokens: Vec<&str> = content
         .lines()
         .filter(|l| !l.trim().starts_with("#include"))
