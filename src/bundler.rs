@@ -64,6 +64,14 @@ impl Bundler {
                             queue.push(resolved);
                         }
                     } else {
+                        if inc.is_quote {
+                            eprintln!(
+                                "  ⚠ bundler: could not resolve local include {:?} from {:?} — \
+                                 pass the library path with -I or add it to [build].include_dirs in Config.toml",
+                                inc.path,
+                                path.display()
+                            );
+                        }
                         let inc_str = if inc.is_quote {
                             format!("\"{}\"", inc.path)
                         } else {
@@ -185,6 +193,11 @@ impl Bundler {
                 if let Some(resolved) = self.resolve_include(&inc, path) {
                     if self.active_files.contains(&resolved) {
                         self.assemble_file(&resolved, emitted, out);
+                    } else {
+                        // Tree-shaking excluded this file; preserve the include so the
+                        // bundled file still compiles if the tree-shaker was wrong.
+                        out.push_str(line);
+                        out.push('\n');
                     }
                     continue;
                 } else {
