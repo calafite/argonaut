@@ -231,20 +231,20 @@ fn parse_include(line: &str) -> Option<Include> {
     }
     let s = s[7..].trim();
 
-    if let Some(rest) = s.strip_prefix('"') {
-        if let Some(end) = rest.find('"') {
-            return Some(Include {
-                path: rest[..end].to_string(),
-                is_quote: true,
-            });
-        }
-    } else if let Some(rest) = s.strip_prefix('<') {
-        if let Some(end) = rest.find('>') {
-            return Some(Include {
-                path: rest[..end].to_string(),
-                is_quote: false,
-            });
-        }
+    if let Some(rest) = s.strip_prefix('"')
+        && let Some(end) = rest.find('"')
+    {
+        return Some(Include {
+            path: rest[..end].to_string(),
+            is_quote: true,
+        });
+    } else if let Some(rest) = s.strip_prefix('<')
+        && let Some(end) = rest.find('>')
+    {
+        return Some(Include {
+            path: rest[..end].to_string(),
+            is_quote: false,
+        });
     }
     None
 }
