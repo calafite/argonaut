@@ -238,14 +238,13 @@ fn parse_include(line: &str) -> Option<Include> {
                 is_quote: true,
             });
         }
-    } else if s.starts_with('<') {
-        if let Some(end) = s[1..].find('>') {
+    } else if s.starts_with('<')
+        && let Some(end) = s[1..].find('>') {
             return Some(Include {
                 path: s[1..=end].to_string(),
                 is_quote: false,
             });
         }
-    }
     None
 }
 
