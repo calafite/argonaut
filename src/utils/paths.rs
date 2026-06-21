@@ -4,9 +4,10 @@ use std::path::{Path, PathBuf};
 
 pub fn expand_path(path: &str) -> PathBuf {
     if (path.starts_with("~/") || path.starts_with("~\\"))
-        && let Some(base_dirs) = BaseDirs::new() {
-            return base_dirs.home_dir().join(&path[2..]);
-        }
+        && let Some(base_dirs) = BaseDirs::new()
+    {
+        return base_dirs.home_dir().join(&path[2..]);
+    }
     PathBuf::from(path)
 }
 
