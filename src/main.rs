@@ -49,6 +49,18 @@ fn get_include_dirs(cli_includes: &[String], config: &Config, file: &Path) -> Ve
         dirs.push(cwd);
     }
 
+    // Standard system include directories (mirrors what g++ searches automatically)
+    let system_dirs: &[&str] = &[
+        "/usr/local/include",
+        "/usr/include",
+    ];
+    for dir in system_dirs {
+        let path = PathBuf::from(dir);
+        if path.exists() {
+            dirs.push(path);
+        }
+    }
+
     let mut resolved = Vec::new();
     for d in dirs {
         let canon = d.canonicalize().unwrap_or(d);
