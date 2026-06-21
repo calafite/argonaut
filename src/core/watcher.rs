@@ -1,7 +1,7 @@
-use crate::compiler::Compiler;
-use crate::runner::Runner;
-use crate::ui::Ui;
-use anyhow::{Result, anyhow};
+use crate::core::compiler::Compiler;
+use crate::core::runner::Runner;
+use crate::utils::ui::Ui;
+use anyhow::{Context, Result};
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher as NotifyWatcher};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::channel;
@@ -16,10 +16,8 @@ impl Watcher {
 
     pub fn watch(file: &Path, use_file: bool, include_dirs: &[PathBuf]) -> Result<()> {
         let file = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
-        let parent_dir = file.parent().ok_or_else(|| anyhow!("Invalid file path"))?;
-        let file_name = file
-            .file_name()
-            .ok_or_else(|| anyhow!("Invalid file name"))?;
+        let parent_dir = file.parent().context("Invalid file path")?;
+        let file_name = file.file_name().context("Invalid file name")?;
 
         let (tx, rx) = channel();
         let mut watcher = RecommendedWatcher::new(tx, Config::default())?;
@@ -47,6 +45,7 @@ impl Watcher {
 
                     if involves_our_file && last_compile.elapsed() > debounce_duration {
                         std::thread::sleep(Duration::from_millis(50));
+                        // Flush any pending events during sleep
                         while rx.try_recv().is_ok() {}
 
                         last_compile = Instant::now();

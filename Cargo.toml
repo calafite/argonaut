@@ -3,16 +3,12 @@ name = "argonaut"
 version = "0.1.0"
 edition = "2024"
 
-[[bin]]
-name = "argo"
-path = "src/main.rs"
-
 [dependencies]
-anyhow = "*"
-clap = { version = "*", features = ["derive"] }
-colored = "*"
-inquire = "*"
-notify = "*"
-serde = { version = "*", features = ["derive"] }
-toml = "*"
-directories = "*"
+anyhow = "1.0.102"
+clap = { version = "4.6.1", features = ["derive"] }
+colored = "3.1.1"
+directories = "6.0.0"
+inquire = "0.9.4"
+notify = "8.2.0"
+serde = { version = "1.0.228", features = ["derive"] }
+toml = "1.1.2"

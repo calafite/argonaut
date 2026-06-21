@@ -1,4 +1,4 @@
-use crate::ui::Ui;
+use crate::utils::ui::Ui;
 use anyhow::{Result, anyhow};
 use inquire::Confirm;
 use std::fs::File;
@@ -57,7 +57,7 @@ impl Runner {
 
         let stdout_thread = thread::spawn(move || {
             let mut buf = [0; 1024];
-            let mut out = io::stdout();
+            let mut out = io::stdout().lock();
             while let Ok(n) = child_stdout.read(&mut buf) {
                 if n == 0 {
                     break;
@@ -71,7 +71,7 @@ impl Runner {
 
         let stderr_thread = thread::spawn(move || {
             let mut buf = [0; 1024];
-            let mut err = io::stderr();
+            let mut err = io::stderr().lock();
             while let Ok(n) = child_stderr.read(&mut buf) {
                 if n == 0 {
                     break;

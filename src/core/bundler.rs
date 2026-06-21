@@ -200,14 +200,14 @@ impl Bundler {
         if inc.is_quote {
             let candidate = current_dir.join(&inc.path);
             if candidate.exists() {
-                return candidate.canonicalize().ok().or_else(|| Some(candidate));
+                return candidate.canonicalize().ok().or(Some(candidate));
             }
         }
 
         for dir in &self.include_dirs {
             let candidate = dir.join(&inc.path);
             if candidate.exists() {
-                return candidate.canonicalize().ok().or_else(|| Some(candidate));
+                return candidate.canonicalize().ok().or(Some(candidate));
             }
         }
 
@@ -251,7 +251,6 @@ fn parse_include(line: &str) -> Option<Include> {
 
 fn extract_symbols(content: &str) -> Vec<String> {
     let mut symbols = Vec::new();
-
     let tokens: Vec<&str> = content
         .lines()
         .filter(|l| !l.trim().starts_with("#include"))

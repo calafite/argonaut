@@ -1,8 +1,7 @@
 use anyhow::{Context, Result};
-use directories::{BaseDirs, ProjectDirs};
+use directories::ProjectDirs;
 use serde::Deserialize;
 use std::fs;
-use std::path::PathBuf;
 
 #[derive(Deserialize, Default, Debug)]
 pub struct Config {
@@ -42,14 +41,5 @@ impl Config {
             .with_context(|| format!("Failed to parse config file at {}", config_file.display()))?;
 
         Ok(config)
-    }
-
-    pub fn expand_path(path: &str) -> PathBuf {
-        if path.starts_with("~/") || path.starts_with("~\\") {
-            if let Some(base_dirs) = BaseDirs::new() {
-                return base_dirs.home_dir().join(&path[2..]);
-            }
-        }
-        PathBuf::from(path)
     }
 }

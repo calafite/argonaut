@@ -1,5 +1,5 @@
-use crate::config::Config;
-use crate::ui::Ui;
+use crate::config::settings::Config;
+use crate::utils::{paths::expand_path, ui::Ui};
 use anyhow::{Context, Result};
 use std::fs;
 use std::path::Path;
@@ -17,7 +17,7 @@ impl Scaffold {
         target_file.set_extension("cpp");
 
         if let Some(template_str) = &config.scaffold.template_path {
-            let template_path = Config::expand_path(template_str);
+            let template_path = expand_path(template_str);
             if template_path.exists() {
                 fs::copy(&template_path, &target_file).with_context(|| {
                     format!("Failed to copy template from {}", template_path.display())

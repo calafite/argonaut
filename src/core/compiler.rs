@@ -1,4 +1,4 @@
-use crate::ui::Ui;
+use crate::utils::ui::Ui;
 use anyhow::{Context, Result, anyhow};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -44,46 +44,45 @@ impl Compiler {
 
     pub fn build(file: &Path, debug: bool, include_dirs: &[PathBuf]) -> Result<PathBuf> {
         let cache_dir = Self::setup_cache()?;
-        let file_stem = file.file_stem().unwrap_or_default().to_string_lossy();
-        let out_bin = cache_dir.join(format!("{}.out", file_stem));
 
-        let include_args: Vec<String> = include_dirs
-            .iter()
-            .flat_map(|dir| vec!["-I".to_string(), dir.to_string_lossy().into_owned()])
-            .collect();
+        let file_stem = file.file_stem().unwrap_or_default();
+        let mut out_bin = cache_dir.join(file_stem);
+        out_bin.set_extension("out");
 
-        let mut args = vec![
+        let mut cmd = Command::new("g++");
+
+        cmd.args([
             "-std=c++20",
             "-Wall",
             "-Wextra",
             "-Wshadow",
             "-DLOCAL",
             "-fdiagnostics-color=always",
-        ];
+        ]);
 
-        let include_args_refs: Vec<&str> = include_args.iter().map(|s| s.as_str()).collect();
-        args.extend(include_args_refs);
+        for dir in include_dirs {
+            cmd.arg("-I").arg(dir);
+        }
 
         if debug {
-            args.extend(&["-g", "-O1"]);
+            cmd.args(["-g", "-O1"]);
             if Self::has_sanitizers() {
-                args.extend(&["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]);
+                cmd.args(["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]);
                 Ui::meta("sanitizers", "address, undefined");
             } else {
                 Ui::warn("sanitizers unavailable");
             }
         } else {
-            args.extend(&["-O2", "-pipe"]);
+            cmd.args(["-O2", "-pipe"]);
         }
 
-        args.push(file.to_str().unwrap());
-        args.push("-o");
-        args.push(out_bin.to_str().unwrap());
+        cmd.arg(file);
+        cmd.arg("-o");
+        cmd.arg(&out_bin);
 
         println!();
 
-        let status = Command::new("g++")
-            .args(&args)
+        let status = cmd
             .status()
             .context("Failed to invoke g++ compiler. Is it installed?")?;
 
