@@ -31,10 +31,8 @@ fn get_include_dirs(cli_includes: &[String], config: &Config, file: &Path) -> Ve
         dirs.push(Config::expand_path(inc));
     }
 
-    // Resolve absolute paths to guarantee parent detection works
     let abs_file = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
-    
-    // Auto-detect a local `include` directory next to the target file
+
     if let Some(parent) = abs_file.parent() {
         let parent_include = parent.join("include");
         if parent_include.exists() {
@@ -42,8 +40,7 @@ fn get_include_dirs(cli_includes: &[String], config: &Config, file: &Path) -> Ve
         }
         dirs.push(parent.to_path_buf());
     }
-    
-    // Auto-detect `include` directory from the terminal's Current Working Directory
+
     if let Ok(cwd) = std::env::current_dir() {
         let cwd_include = cwd.join("include");
         if cwd_include.exists() {
@@ -51,8 +48,7 @@ fn get_include_dirs(cli_includes: &[String], config: &Config, file: &Path) -> Ve
         }
         dirs.push(cwd);
     }
-    
-    // Deduplicate to prevent overlapping scans
+
     let mut resolved = Vec::new();
     for d in dirs {
         let canon = d.canonicalize().unwrap_or(d);
@@ -60,7 +56,7 @@ fn get_include_dirs(cli_includes: &[String], config: &Config, file: &Path) -> Ve
             resolved.push(canon);
         }
     }
-    
+
     resolved
 }
 
@@ -77,7 +73,7 @@ fn main() -> Result<()> {
         } => {
             let use_file = Runner::resolve_input(input, no_input)?;
             let dirs = get_include_dirs(&include_dirs, &config, &file);
-            
+
             Ui::section("Release Build");
             Ui::meta("source", file.display());
 
@@ -125,19 +121,23 @@ fn main() -> Result<()> {
             Ui::section("Project Scaffold");
             Scaffold::create(&dir, &name, &config)?;
         }
-        Commands::Bundle { file, out, include_dirs } => {
+        Commands::Bundle {
+            file,
+            out,
+            include_dirs,
+        } => {
             let dirs = get_include_dirs(&include_dirs, &config, &file);
-                
+
             Ui::section("Bundler");
             Ui::meta("source", file.display());
             let mut bundler = Bundler::new(dirs);
             let bundled = bundler.bundle(&file)?;
-            
+
             let out_path = out.unwrap_or_else(|| {
                 let stem = file.file_stem().unwrap_or_default().to_string_lossy();
                 file.with_file_name(format!("{}_bundled.cpp", stem))
             });
-            
+
             std::fs::write(&out_path, bundled)?;
             Ui::ok(format!("Bundled to {}", out_path.display()));
         }
