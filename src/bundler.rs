@@ -182,9 +182,6 @@ impl Bundler {
                 if let Some(resolved) = self.resolve_include(&inc, path) {
                     if self.active_files.contains(&resolved) {
                         self.assemble_file(&resolved, emitted, out);
-                    } else {
-                        out.push_str(line);
-                        out.push('\n');
                     }
                     continue;
                 } else {
