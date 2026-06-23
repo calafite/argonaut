@@ -98,7 +98,7 @@ impl Compiler {
                 cmd.args(["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]);
                 Ui::meta("sanitizers", "address, undefined");
             } else {
-                Ui::warn(format!("sanitizers unavailable for '{}'", compiler_cmd));
+                Ui::meta("sanitizers", "unavailable");
             }
         } else {
             cmd.args(["-O2"]);

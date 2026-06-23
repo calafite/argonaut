@@ -34,6 +34,6 @@ impl Ui {
 
     pub fn time(nanos: u128) {
         let ms = nanos as f64 / 1_000_000.0;
-        println!("\n  {}  {}", "⏱".dimmed(), format!("{ms:.4} ms").dimmed());
+        println!("  {}  {}", "⏱".dimmed(), format!("{ms:.4} ms").dimmed());
     }
 }
