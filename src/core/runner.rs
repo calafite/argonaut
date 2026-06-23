@@ -186,16 +186,21 @@ fn get_children_cpu_nanos() -> u128 {
 
 fn print_gdb_trace(binary: &Path, use_file: bool, bt_limit: usize) {
     let run_redirect = if use_file {
-        "run < input.txt"
+        "run < input.txt > /dev/null 2>&1"
     } else {
-        "run < /dev/null"
+        "run < /dev/null > /dev/null 2>&1"
     };
+
     let limit_cmd = format!("set backtrace limit {bt_limit}");
 
     let mut gdb = Command::new("gdb");
+
+    gdb.env("LC_ALL", "C");
     gdb.args([
         "-q",
         "-batch",
+        "-ex",
+        "set print address off",
         "-ex",
         &limit_cmd,
         "-ex",
@@ -212,37 +217,56 @@ fn print_gdb_trace(binary: &Path, use_file: bool, bt_limit: usize) {
             String::from_utf8_lossy(&out.stderr)
         );
 
+        let mut frames = Vec::new();
+        let mut crash_reason = String::new();
+        let mut offending_line = String::new();
         let mut missing_symbols = false;
-
-        Ui::section("Instant GDB Stack Trace");
 
         for line in combined.lines() {
             let trimmed = line.trim();
-            if trimmed.is_empty()
-                || trimmed.starts_with("[Thread")
-                || trimmed.starts_with("[New")
-                || trimmed.starts_with("[Detaching")
-                || trimmed.starts_with("Using host")
-                || trimmed.starts_with("Inferior 1")
-            {
-                continue;
-            }
 
             if trimmed.contains("?? ()") {
                 missing_symbols = true;
             }
 
-            if trimmed.starts_with('#') {
-                println!("  {}", line.cyan().bold());
-            } else if trimmed.starts_with("Program received") {
-                println!("  {}", line.red().bold());
-            } else if trimmed.chars().next().map_or(false, |c| c.is_ascii_digit())
-                && trimmed.contains('\t')
+            if trimmed.starts_with('#')
+                && trimmed[1..]
+                    .chars()
+                    .next()
+                    .map_or(false, |c| c.is_ascii_digit())
             {
-                println!("  {}", line.yellow().bold());
-            } else {
-                println!("  {}", line);
+                frames.push(trimmed.to_string());
+                continue;
             }
+
+            if trimmed.starts_with("Program received signal")
+                || trimmed.starts_with("Program terminated")
+            {
+                crash_reason = trimmed.to_string();
+                continue;
+            }
+
+            if frames.is_empty() {
+                if let Some((line_num, _code)) = trimmed.split_once(|c: char| c.is_whitespace()) {
+                    if !line_num.is_empty() && line_num.chars().all(|c| c.is_ascii_digit()) {
+                        offending_line = trimmed.to_string();
+                    }
+                }
+            }
+        }
+
+        Ui::section("Instant GDB Stack Trace");
+
+        if !crash_reason.is_empty() {
+            println!("  {}", crash_reason.red().bold());
+        }
+
+        if !offending_line.is_empty() {
+            println!("  {}", offending_line.yellow().bold());
+        }
+
+        for frame in frames {
+            println!("  {}", frame.cyan().bold());
         }
 
         if missing_symbols {
@@ -250,6 +274,8 @@ fn print_gdb_trace(binary: &Path, use_file: bool, bt_limit: usize) {
             Ui::info(
                 "Trace contains '?? ()'. Re-compile via `argo debug` to see exact C++ line numbers.",
             );
+        } else if crash_reason.is_empty() {
+            Ui::warn("Could not isolate crash context. Check GDB installation.");
         }
     } else {
         Ui::warn(
