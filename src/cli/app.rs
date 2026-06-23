@@ -6,11 +6,24 @@ use crate::bundler::Bundler;
 use crate::config::settings::Config;
 use crate::core::{compiler::Compiler, runner::Runner, scaffold::Scaffold, watcher::Watcher};
 use crate::utils::{paths::get_include_dirs, ui::Ui};
+use clap::builder::styling::{AnsiColor, Effects, Styles};
+
+fn cli_styles() -> Styles {
+    Styles::styled()
+        .header(AnsiColor::Yellow.on_default() | Effects::BOLD)
+        .usage(AnsiColor::Green.on_default() | Effects::BOLD)
+        .literal(AnsiColor::Cyan.on_default() | Effects::BOLD)
+        .placeholder(AnsiColor::Green.on_default())
+        .error(AnsiColor::Red.on_default() | Effects::BOLD)
+        .valid(AnsiColor::Cyan.on_default() | Effects::BOLD)
+        .invalid(AnsiColor::Yellow.on_default() | Effects::BOLD)
+}
 
 #[derive(Parser)]
 #[command(name = "argo")]
 #[command(version = "1.0.0")]
 #[command(about = "Competitive Programming Toolkit", long_about = None)]
+#[command(styles = cli_styles())]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
