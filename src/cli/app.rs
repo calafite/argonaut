@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -21,45 +21,39 @@ impl Cli {
         let config = Config::load()?;
 
         match self.command {
-            Commands::Comp {
-                file,
-                input,
-                no_input,
-                include_dirs,
-            } => {
-                let use_file = Runner::resolve_input(input, no_input)?;
+            Commands::Build { file, include_dirs } => {
                 let dirs = get_include_dirs(&include_dirs, &config, &file);
 
                 Ui::section("Release Build");
                 Ui::meta("source", file.display());
-
-                let binary = Compiler::build(&file, false, &dirs)?;
-                Ui::section("Running Program");
-                Runner::run(&binary, use_file)?;
+                Compiler::build(&file, false, &dirs)?;
             }
-            Commands::Debug {
-                file,
-                input,
-                no_input,
-                include_dirs,
-            } => {
-                let use_file = Runner::resolve_input(input, no_input)?;
+            Commands::Debug { file, include_dirs } => {
                 let dirs = get_include_dirs(&include_dirs, &config, &file);
 
                 Ui::section("Debug Build");
                 Ui::meta("source", file.display());
-
-                let binary = Compiler::build(&file, true, &dirs)?;
-                Ui::section("Running Program");
-                Runner::run(&binary, use_file)?;
+                Compiler::build(&file, true, &dirs)?;
             }
-            Commands::Run {
-                binary,
+            Commands::Test {
+                file,
                 input,
                 no_input,
             } => {
+                let binary = Compiler::binary_path(&file);
+
+                if !binary.exists() {
+                    return Err(anyhow!(
+                        "No compiled binary found for '{}'. Run `argo build {}` or `argo debug {}` first.",
+                        file.display(),
+                        file.display(),
+                        file.display()
+                    ));
+                }
+
                 let use_file = Runner::resolve_input(input, no_input)?;
-                Ui::section("Running Program");
+                Ui::section("Running Tests");
+                Ui::meta("artifact", binary.display());
                 Runner::run(&binary, use_file)?;
             }
             Commands::Watch {
@@ -73,7 +67,7 @@ impl Cli {
 
                 Watcher::watch(&file, use_file, &dirs)?;
             }
-            Commands::Mkcp { dir, name } => {
+            Commands::New { dir, name } => {
                 Ui::section("Project Scaffold");
                 Scaffold::create(&dir, &name, &config)?;
             }
@@ -106,25 +100,25 @@ impl Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Compile (release) and run
-    Comp {
+    /// Compile solution in release mode (-O2)
+    Build {
         file: PathBuf,
-        #[arg(long, conflicts_with = "no_input")]
-        input: bool,
-        #[arg(long)]
-        no_input: bool,
         #[arg(short = 'I', long = "include")]
         include_dirs: Vec<String>,
     },
-    /// Compile (debug mode, sanitizers) and run
+    /// Compile solution with debug symbols & sanitizers
     Debug {
+        file: PathBuf,
+        #[arg(short = 'I', long = "include")]
+        include_dirs: Vec<String>,
+    },
+    /// Execute a compiled solution against inputs
+    Test {
         file: PathBuf,
         #[arg(long, conflicts_with = "no_input")]
         input: bool,
         #[arg(long)]
         no_input: bool,
-        #[arg(short = 'I', long = "include")]
-        include_dirs: Vec<String>,
     },
     /// Rebuild and run on every save
     Watch {
@@ -137,18 +131,10 @@ pub enum Commands {
         include_dirs: Vec<String>,
     },
     /// Scaffold a new solution file
-    Mkcp {
+    New {
         dir: PathBuf,
         #[arg(default_value = "main")]
         name: String,
-    },
-    /// Execute a compiled binary directly
-    Run {
-        binary: PathBuf,
-        #[arg(long, conflicts_with = "no_input")]
-        input: bool,
-        #[arg(long)]
-        no_input: bool,
     },
     /// Bundle a solution file into a single monolithic file
     Bundle {

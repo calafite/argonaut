@@ -42,6 +42,14 @@ impl Compiler {
         })
     }
 
+    pub fn binary_path(file: &Path) -> PathBuf {
+        let cache_dir = Path::new(Self::CACHE_DIR);
+        let file_stem = file.file_stem().unwrap_or_default();
+        let mut out_bin = cache_dir.join(file_stem);
+        out_bin.set_extension("out");
+        out_bin
+    }
+
     pub fn build(file: &Path, debug: bool, include_dirs: &[PathBuf]) -> Result<PathBuf> {
         let cache_dir = Self::setup_cache()?;
 
