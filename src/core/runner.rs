@@ -185,16 +185,113 @@ fn get_children_cpu_nanos() -> u128 {
 }
 
 fn print_gdb_trace(binary: &Path, use_file: bool, bt_limit: usize) {
+    let input_redirect = if use_file { "input.txt" } else { "/dev/null" };
+
+    let _ = std::fs::create_dir_all(".argo");
+    let tracer_path = Path::new(".argo/tracer.py");
+    if std::fs::write(tracer_path, include_str!("tracer.py")).is_err() {
+        Ui::warn("Could not write Python tracer. Falling back to CLI parsing...");
+        print_gdb_trace_fallback(binary, use_file, bt_limit);
+        return;
+    }
+
+    let mut gdb = Command::new("gdb");
+
+    gdb.env("ARGO_INPUT_REDIRECT", input_redirect)
+        .env("ARGO_BT_LIMIT", bt_limit.to_string())
+        .env("LC_ALL", "C")
+        .args([
+            "-q",
+            "-batch",
+            "-x",
+            tracer_path.to_str().unwrap(),
+            binary.to_str().unwrap(),
+        ]);
+
+    let out = match gdb.output() {
+        Ok(output) => output,
+        Err(_) => {
+            Ui::warn("Could not execute 'gdb' — ensure GDB is installed in your PATH.");
+            return;
+        }
+    };
+
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    if combined.contains("Python scripting is not supported") || !combined.contains("@@ARGO_") {
+        print_gdb_trace_fallback(binary, use_file, bt_limit);
+        return;
+    }
+
+    let mut missing_symbols = false;
+    let mut reason_found = false;
+
+    Ui::section("Automated Crash Trace");
+
+    for line in combined.lines() {
+        if let Some(reason) = line.strip_prefix("@@ARGO_REASON@@") {
+            println!("  {} {}", "💥".red(), reason.trim().red().bold());
+            reason_found = true;
+        } else if let Some(frame_data) = line.strip_prefix("@@ARGO_FRAME@@") {
+            let parts: Vec<&str> = frame_data.splitn(4, "@@").collect();
+            if parts.len() == 4 {
+                let func = parts[0];
+                let file = parts[1];
+                let line_num = parts[2];
+                let code = parts[3];
+
+                if func == "??" || file == "??" {
+                    missing_symbols = true;
+                }
+
+                let display_file = if file.starts_with('/') {
+                    Path::new(file)
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                } else {
+                    file.into()
+                };
+
+                if file != "??" && line_num != "0" {
+                    println!(
+                        "  {} {} at {}:{}",
+                        "↳".dimmed(),
+                        func.cyan().bold(),
+                        display_file.yellow(),
+                        line_num.yellow().bold()
+                    );
+                    if !code.is_empty() {
+                        println!("      {} {}", ">".red(), code.white());
+                    }
+                } else {
+                    println!("  {} {}", "↳".dimmed(), func.cyan().bold());
+                }
+            }
+        }
+    }
+
+    if missing_symbols {
+        println!();
+        Ui::info("Trace missing symbols ('??'). Rebuild via `argo debug` for exact line numbers.");
+    } else if !reason_found {
+        Ui::warn("GDB failed to isolate the crash. Run manually for details.");
+    }
+}
+
+fn print_gdb_trace_fallback(binary: &Path, use_file: bool, bt_limit: usize) {
     let run_redirect = if use_file {
         "run < input.txt > /dev/null 2>&1"
     } else {
         "run < /dev/null > /dev/null 2>&1"
     };
-
     let limit_cmd = format!("set backtrace limit {bt_limit}");
 
     let mut gdb = Command::new("gdb");
-
     gdb.env("LC_ALL", "C");
     gdb.args([
         "-q",
@@ -224,7 +321,6 @@ fn print_gdb_trace(binary: &Path, use_file: bool, bt_limit: usize) {
 
         for line in combined.lines() {
             let trimmed = line.trim();
-
             if trimmed.contains("?? ()") {
                 missing_symbols = true;
             }
@@ -247,7 +343,7 @@ fn print_gdb_trace(binary: &Path, use_file: bool, bt_limit: usize) {
             }
 
             if frames.is_empty() {
-                if let Some((line_num, _code)) = trimmed.split_once(|c: char| c.is_whitespace()) {
+                if let Some((line_num, _)) = trimmed.split_once(|c: char| c.is_whitespace()) {
                     if !line_num.is_empty() && line_num.chars().all(|c| c.is_ascii_digit()) {
                         offending_line = trimmed.to_string();
                     }
@@ -255,16 +351,14 @@ fn print_gdb_trace(binary: &Path, use_file: bool, bt_limit: usize) {
             }
         }
 
-        Ui::section("Instant GDB Stack Trace");
+        Ui::section("Instant GDB Stack Trace (Fallback Mode)");
 
         if !crash_reason.is_empty() {
             println!("  {}", crash_reason.red().bold());
         }
-
         if !offending_line.is_empty() {
             println!("  {}", offending_line.yellow().bold());
         }
-
         for frame in frames {
             println!("  {}", frame.cyan().bold());
         }
@@ -272,14 +366,8 @@ fn print_gdb_trace(binary: &Path, use_file: bool, bt_limit: usize) {
         if missing_symbols {
             println!();
             Ui::info(
-                "Trace contains '?? ()'. Re-compile via `argo debug` to see exact C++ line numbers.",
+                "Trace missing symbols ('??'). Rebuild via `argo debug` for exact line numbers.",
             );
-        } else if crash_reason.is_empty() {
-            Ui::warn("Could not isolate crash context. Check GDB installation.");
         }
-    } else {
-        Ui::warn(
-            "Could not execute 'gdb' — install GDB in your PATH to get automated crash traces.",
-        );
     }
 }
