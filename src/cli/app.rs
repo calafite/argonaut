@@ -87,7 +87,7 @@ impl Cli {
                 Ui::section("Bundler");
                 Ui::meta("source", file.display());
 
-                let mut bundler = Bundler::new(dirs);
+                let bundler = Bundler::new(dirs);
                 let bundled = bundler.bundle(&file)?;
 
                 let out_path = out.unwrap_or_else(|| {

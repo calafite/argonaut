@@ -21,6 +21,12 @@ pub struct TreeSitterShaker {
     library_blocks: Vec<CodeBlock>,
 }
 
+impl Default for TreeSitterShaker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TreeSitterShaker {
     pub fn new() -> Self {
         Self {
@@ -199,10 +205,10 @@ fn get_declared_symbols(node: Node, source: &[u8]) -> Vec<String> {
         }
         "class_specifier" | "struct_specifier" | "enum_specifier" | "union_specifier"
         | "alias_declaration" => {
-            if let Some(name_node) = node.child_by_field_name("name") {
-                if let Ok(sym) = name_node.utf8_text(source) {
-                    symbols.push(sym.to_string());
-                }
+            if let Some(name_node) = node.child_by_field_name("name")
+                && let Ok(sym) = name_node.utf8_text(source)
+            {
+                symbols.push(sym.to_string());
             }
         }
         "function_definition" | "declaration" | "type_definition" => {
@@ -250,10 +256,9 @@ fn get_referenced_symbols(node: Node, source: &[u8]) -> HashSet<String> {
             if matches!(
                 curr.kind(),
                 "identifier" | "type_identifier" | "field_identifier" | "namespace_identifier"
-            ) {
-                if let Ok(text) = curr.utf8_text(source) {
-                    refs.insert(text.to_string());
-                }
+            ) && let Ok(text) = curr.utf8_text(source)
+            {
+                refs.insert(text.to_string());
             }
         } else {
             let mut cursor = curr.walk();

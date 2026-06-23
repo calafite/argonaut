@@ -12,6 +12,12 @@ pub struct TopologicalInliner {
     system_includes: HashSet<String>,
 }
 
+impl Default for TopologicalInliner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TopologicalInliner {
     pub fn new() -> Self {
         Self {
@@ -90,7 +96,7 @@ impl BundleStrategy for TopologicalInliner {
         for sys in sys_list {
             final_bundle.push_str(&format!("#include {}\n", sys));
         }
-        final_bundle.push_str("\n");
+        final_bundle.push('\n');
         final_bundle.push_str(&body);
 
         Ok(final_bundle
