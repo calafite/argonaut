@@ -213,7 +213,7 @@ fn print_gdb_trace(binary: &Path, use_file: bool, bt_limit: usize) {
                 println!("  {}", line.cyan().bold());
             } else if trimmed.starts_with("Program received") {
                 println!("  {}", line.red().bold());
-            } else if trimmed.chars().next().map_or(false, |c| c.is_ascii_digit())
+            } else if trimmed.chars().next().is_some_and(|c| c.is_ascii_digit())
                 && trimmed.contains('\t')
             {
                 println!("  {}", line.yellow().bold());
