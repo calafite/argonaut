@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use crate::bundler::Bundler;
 use crate::config::settings::Config;
-use crate::core::{compiler::Compiler, runner::Runner, scaffold::Scaffold, watcher::Watcher};
+use crate::core::{compiler::Compiler, formatter::Formatter, runner::Runner, scaffold::Scaffold};
 use crate::utils::{paths::get_include_dirs, ui::Ui};
 
 fn cli_styles() -> Styles {
@@ -60,17 +60,6 @@ impl Cli {
                 Ui::meta("target", display_name);
                 Runner::run(&binary, use_file)?;
             }
-            Commands::Watch {
-                file,
-                input,
-                no_input,
-                include_dirs,
-            } => {
-                let use_file = Runner::resolve_input(input, no_input)?;
-                let dirs = get_include_dirs(&include_dirs, &config, &file);
-
-                Watcher::watch(&file, use_file, &dirs)?;
-            }
             Commands::New { dir, name } => {
                 Ui::section("Project Scaffold");
                 Scaffold::create(&dir, &name, &config)?;
@@ -95,6 +84,10 @@ impl Cli {
 
                 std::fs::write(&out_path, bundled)?;
                 Ui::ok(format!("Bundled to {}", out_path.display()));
+            }
+            Commands::Format { file } => {
+                Ui::section("Code Formatter");
+                Formatter::format(&file)?;
             }
         }
 
@@ -125,16 +118,6 @@ pub enum Commands {
         #[arg(long)]
         no_input: bool,
     },
-    /// Rebuild and run on every save
-    Watch {
-        file: PathBuf,
-        #[arg(long, conflicts_with = "no_input")]
-        input: bool,
-        #[arg(long)]
-        no_input: bool,
-        #[arg(short = 'I', long = "include")]
-        include_dirs: Vec<String>,
-    },
     /// Scaffold a new solution file
     New {
         dir: PathBuf,
@@ -148,5 +131,10 @@ pub enum Commands {
         out: Option<PathBuf>,
         #[arg(short = 'I', long = "include")]
         include_dirs: Vec<String>,
+    },
+    /// Format a C++ solution using a CP-optimized profile
+    Format {
+        #[arg(value_hint = ValueHint::FilePath)]
+        file: PathBuf,
     },
 }
