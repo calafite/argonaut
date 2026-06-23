@@ -1,5 +1,6 @@
 use crate::utils::ui::Ui;
 use anyhow::{Context, Result, anyhow};
+use colored::Colorize;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -59,7 +60,7 @@ impl Compiler {
         debug: bool,
         include_dirs: &[PathBuf],
         compiler_cmd: &str,
-        log_errors_to_file: bool,
+        log_file: bool,
     ) -> Result<PathBuf> {
         if !file.is_file() {
             anyhow::bail!(
@@ -83,7 +84,7 @@ impl Compiler {
 
         cmd.args(["-std=c++20", "-Wall", "-Wextra", "-Wshadow", "-DLOCAL"]);
 
-        if !log_errors_to_file {
+        if !log_file {
             cmd.arg("-fdiagnostics-color=always");
         }
 
@@ -107,38 +108,74 @@ impl Compiler {
         cmd.arg("-o");
         cmd.arg(&out_bin);
 
-        if log_errors_to_file {
-            let mut error_file = cache_dir.join(file_stem);
-            error_file.set_extension("errors");
-            let f = fs::File::create(&error_file).context("Failed to create error log file")?;
-            let f_clone = f.try_clone().context("Failed to clone file handle")?;
-            cmd.stdout(std::process::Stdio::from(f_clone));
-            cmd.stderr(std::process::Stdio::from(f));
-        }
-
         println!();
 
-        let status = cmd
-            .status()
-            .with_context(|| format!("Failed to invoke '{}'. Is it installed?", bin))?;
+        if log_file {
+            let output = cmd
+                .output()
+                .with_context(|| format!("Failed to invoke '{}'. Is it installed?", bin))?;
 
-        if !status.success() {
-            if log_errors_to_file {
-                let mut error_file = cache_dir.join(file_stem);
-                error_file.set_extension("errors");
-                return Err(anyhow!(
-                    "Compilation failed with status: {}. See {} for details.",
-                    status,
-                    error_file.display()
+            let mut error_file = cache_dir.join(file_stem);
+            error_file.set_extension("errors");
+
+            let stderr_str = String::from_utf8_lossy(&output.stderr);
+            let mut combined_out = Vec::new();
+            combined_out.extend_from_slice(&output.stdout);
+            combined_out.extend_from_slice(&output.stderr);
+            fs::write(&error_file, combined_out).context("Failed to write error log file")?;
+
+            let mut error_count = 0;
+            let mut warning_count = 0;
+            let mut first_error = None;
+
+            for line in stderr_str.lines() {
+                let lower = line.to_lowercase();
+                if lower.contains("error:") || lower.contains("fatal error:") {
+                    error_count += 1;
+                    if first_error.is_none() {
+                        first_error = Some(line.trim().to_string());
+                    }
+                } else if lower.contains("warning:") {
+                    warning_count += 1;
+                }
+            }
+
+            if !output.status.success() {
+                Ui::fail(format!(
+                    "Compilation failed: {} errors, {} warnings",
+                    error_count, warning_count
                 ));
+
+                if let Some(err_msg) = first_error {
+                    println!("  {} {}", "↳".dimmed(), err_msg.red());
+                }
+
+                Ui::info(format!("Full log saved to {}", error_file.display()));
+                return Err(anyhow!("Build aborted due to compilation errors."));
+            } else if warning_count > 0 {
+                Ui::warn(format!(
+                    "compiled successfully with {} warnings",
+                    warning_count
+                ));
+                Ui::info(format!("Details saved to {}", error_file.display()));
+                println!();
             } else {
+                Ui::ok("compiled successfully\n");
+            }
+        } else {
+            let status = cmd
+                .status()
+                .with_context(|| format!("Failed to invoke '{}'. Is it installed?", bin))?;
+
+            if !status.success() {
                 return Err(anyhow!("Compilation failed with status: {}", status));
             }
+            Ui::ok("compiled successfully\n");
         }
 
-        Ui::ok("compiled successfully\n");
         Ok(out_bin)
     }
+
     pub fn resolve_test_target(query: Option<&str>) -> Result<(PathBuf, String)> {
         let cache_dir = Path::new(Self::CACHE_DIR);
         if !cache_dir.exists() {
