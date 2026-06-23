@@ -22,6 +22,8 @@ pub struct BuildConfig {
     pub include_dirs: Vec<String>,
     #[serde(default = "default_compiler")]
     pub compiler: String,
+    #[serde(default)]
+    pub log_file: bool,
 }
 
 fn default_compiler() -> String {
@@ -33,6 +35,7 @@ impl Default for BuildConfig {
         Self {
             include_dirs: Vec::new(),
             compiler: default_compiler(),
+            log_file: false,
         }
     }
 }

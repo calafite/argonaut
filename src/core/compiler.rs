@@ -59,6 +59,7 @@ impl Compiler {
         debug: bool,
         include_dirs: &[PathBuf],
         compiler_cmd: &str,
+        log_errors_to_file: bool,
     ) -> Result<PathBuf> {
         if !file.is_file() {
             anyhow::bail!(
@@ -80,14 +81,11 @@ impl Compiler {
         let mut cmd = Command::new(bin);
         cmd.args(parts);
 
-        cmd.args([
-            "-std=c++20",
-            "-Wall",
-            "-Wextra",
-            "-Wshadow",
-            "-DLOCAL",
-            "-fdiagnostics-color=always",
-        ]);
+        cmd.args(["-std=c++20", "-Wall", "-Wextra", "-Wshadow", "-DLOCAL"]);
+
+        if !log_errors_to_file {
+            cmd.arg("-fdiagnostics-color=always");
+        }
 
         for dir in include_dirs {
             cmd.arg("-I").arg(dir);
@@ -109,6 +107,15 @@ impl Compiler {
         cmd.arg("-o");
         cmd.arg(&out_bin);
 
+        if log_errors_to_file {
+            let mut error_file = cache_dir.join(file_stem);
+            error_file.set_extension("errors");
+            let f = fs::File::create(&error_file).context("Failed to create error log file")?;
+            let f_clone = f.try_clone().context("Failed to clone file handle")?;
+            cmd.stdout(std::process::Stdio::from(f_clone));
+            cmd.stderr(std::process::Stdio::from(f));
+        }
+
         println!();
 
         let status = cmd
@@ -116,13 +123,22 @@ impl Compiler {
             .with_context(|| format!("Failed to invoke '{}'. Is it installed?", bin))?;
 
         if !status.success() {
-            return Err(anyhow!("Compilation failed with status: {}", status));
+            if log_errors_to_file {
+                let mut error_file = cache_dir.join(file_stem);
+                error_file.set_extension("errors");
+                return Err(anyhow!(
+                    "Compilation failed with status: {}. See {} for details.",
+                    status,
+                    error_file.display()
+                ));
+            } else {
+                return Err(anyhow!("Compilation failed with status: {}", status));
+            }
         }
 
         Ui::ok("compiled successfully\n");
         Ok(out_bin)
     }
-
     pub fn resolve_test_target(query: Option<&str>) -> Result<(PathBuf, String)> {
         let cache_dir = Path::new(Self::CACHE_DIR);
         if !cache_dir.exists() {

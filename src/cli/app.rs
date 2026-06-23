@@ -41,7 +41,13 @@ impl Cli {
                 Ui::meta("source", file.display());
                 Ui::meta("compiler", &config.build.compiler);
 
-                Compiler::build(&file, false, &dirs, &config.build.compiler)?;
+                Compiler::build(
+                    &file,
+                    false,
+                    &dirs,
+                    &config.build.compiler,
+                    config.build.log_file,
+                )?;
             }
             Commands::Debug { file, include_dirs } => {
                 let dirs = get_include_dirs(&include_dirs, &config, &file);
@@ -50,7 +56,13 @@ impl Cli {
                 Ui::meta("source", file.display());
                 Ui::meta("compiler", &config.build.compiler);
 
-                Compiler::build(&file, true, &dirs, &config.build.compiler)?;
+                Compiler::build(
+                    &file,
+                    true,
+                    &dirs,
+                    &config.build.compiler,
+                    config.build.log_file,
+                )?;
             }
             Commands::Test {
                 target,
