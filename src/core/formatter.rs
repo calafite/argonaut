@@ -1,8 +1,10 @@
 use crate::utils::ui::Ui;
 use anyhow::{Context, Result};
 use colored::Colorize;
+use directories::ProjectDirs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 pub struct Formatter;
 
@@ -24,18 +26,44 @@ impl Formatter {
             return Ok(());
         }
 
-        let config_dir = Self::find_or_init_config(&abs_file)?;
+        let (working_dir, using_central) = Self::resolve_config_environment(&abs_file)?;
 
-        let output = Command::new("clang-format")
-            .current_dir(&config_dir)
+        let source = std::fs::read(&abs_file).context("Failed to read source file")?;
+
+        let file_name = abs_file.file_name().unwrap_or_default().to_string_lossy();
+
+        let mut child = Command::new("clang-format")
+            .current_dir(&working_dir)
             .arg("--style=file")
-            .arg("-i")
-            .arg(&abs_file)
-            .output()
+            .arg(format!("--assume-filename={}", file_name))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
             .context("Failed to invoke clang-format process")?;
 
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin
+                .write_all(&source)
+                .context("Failed to pipe source to clang-format")?;
+        }
+
+        let output = child
+            .wait_with_output()
+            .context("Failed to await clang-format")?;
+
         if output.status.success() {
-            Ui::ok(format!("Formatted {}", file.display()));
+            std::fs::write(&abs_file, output.stdout)
+                .context("Failed to write formatted code back to file")?;
+
+            if using_central {
+                Ui::ok(format!(
+                    "Formatted {} (using central config)",
+                    file.display()
+                ));
+            } else {
+                Ui::ok(format!("Formatted {} (using local config)", file.display()));
+            }
         } else {
             Ui::fail(format!("Formatter failed on {}", file.display()));
             let err_msg = String::from_utf8_lossy(&output.stderr);
@@ -49,32 +77,42 @@ impl Formatter {
         Ok(())
     }
 
-    fn find_or_init_config(file: &Path) -> Result<PathBuf> {
-        let parent_dir = file.parent().unwrap_or_else(|| Path::new("."));
-        let mut current_dir = parent_dir.to_path_buf();
+    fn resolve_config_environment(file: &Path) -> Result<(PathBuf, bool)> {
+        let mut check_dir = file
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let target_dir = check_dir.clone();
 
         loop {
-            if current_dir.join(".clang-format").exists()
-                || current_dir.join("_clang-format").exists()
+            if check_dir.join(".clang-format").exists() || check_dir.join("_clang-format").exists()
             {
-                return Ok(current_dir);
+                return Ok((target_dir, false));
             }
-            if !current_dir.pop() {
+            if !check_dir.pop() {
                 break;
             }
         }
 
-        let target_dir = parent_dir.to_path_buf();
-        let config_path = target_dir.join(".clang-format");
+        let proj_dirs = ProjectDirs::from("", "", "argo")
+            .context("Could not determine user configuration directory")?;
 
-        std::fs::write(&config_path, include_str!(".default.clang-format"))
-            .context("Failed to write default .clang-format")?;
+        let config_dir = proj_dirs.config_dir().to_path_buf();
+        if !config_dir.exists() {
+            std::fs::create_dir_all(&config_dir)
+                .context("Failed to create argo config directory")?;
+        }
 
-        Ui::info(format!(
-            "Initialized CP-optimized config at {}",
-            config_path.display()
-        ));
+        let central_config = config_dir.join(".clang-format");
+        if !central_config.exists() {
+            std::fs::write(&central_config, include_str!(".default.clang-format"))
+                .context("Failed to write central .clang-format")?;
+            Ui::info(format!(
+                "Initialized central CP-optimized config at {}",
+                central_config.display()
+            ));
+        }
 
-        Ok(target_dir)
+        Ok((config_dir, true))
     }
 }
