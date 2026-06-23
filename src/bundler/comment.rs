@@ -19,7 +19,7 @@ pub fn strip_comments(input: &str) -> String {
                 chars.next();
                 in_m_line = false;
             } else if c == '\n' {
-                out.push('\n'); 
+                out.push('\n');
             }
             continue;
         }

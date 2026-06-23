@@ -2,10 +2,9 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+use crate::bundler::Bundler;
 use crate::config::settings::Config;
-use crate::core::{
-    bundler::Bundler, compiler::Compiler, runner::Runner, scaffold::Scaffold, watcher::Watcher,
-};
+use crate::core::{compiler::Compiler, runner::Runner, scaffold::Scaffold, watcher::Watcher};
 use crate::utils::{paths::get_include_dirs, ui::Ui};
 
 #[derive(Parser)]
