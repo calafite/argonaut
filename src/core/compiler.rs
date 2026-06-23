@@ -186,13 +186,13 @@ impl Compiler {
 
         let mut check_dir = |dir: &Path| {
             let argo_dir = dir.join(Self::CACHE_DIR);
-            if argo_dir.exists() && argo_dir.is_dir() {
-                if let Ok(entries) = fs::read_dir(argo_dir) {
+            if argo_dir.exists() && argo_dir.is_dir()
+                && let Ok(entries) = fs::read_dir(argo_dir) {
                     for entry in entries.flatten() {
                         let p = entry.path();
-                        if p.extension().is_some_and(|ext| ext == "out") {
-                            if let Ok(meta) = entry.metadata() {
-                                if let Ok(mtime) = meta.modified() {
+                        if p.extension().is_some_and(|ext| ext == "out")
+                            && let Ok(meta) = entry.metadata()
+                                && let Ok(mtime) = meta.modified() {
                                     let stem = p
                                         .file_stem()
                                         .unwrap_or_default()
@@ -200,11 +200,8 @@ impl Compiler {
                                         .to_string();
                                     candidates.push((mtime, p, stem));
                                 }
-                            }
-                        }
                     }
                 }
-            }
         };
 
         check_dir(&current_dir);
