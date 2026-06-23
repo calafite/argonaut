@@ -101,4 +101,97 @@ impl Compiler {
         Ui::ok("compiled successfully\n");
         Ok(out_bin)
     }
+
+    pub fn resolve_test_target(query: Option<&str>) -> Result<(PathBuf, String)> {
+        let cache_dir = Path::new(Self::CACHE_DIR);
+        if !cache_dir.exists() {
+            anyhow::bail!("No .argo cache directory found. Run `argo build` first.");
+        }
+
+        let query_str = match query {
+            Some(q) if !q.trim().is_empty() => q.trim(),
+            _ => {
+                let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
+                for entry in fs::read_dir(cache_dir)?.flatten() {
+                    let p = entry.path();
+                    if p.extension().is_some_and(|ext| ext == "out") {
+                        if let Ok(meta) = entry.metadata()
+                            && let Ok(mtime) = meta.modified()
+                        {
+                            if newest.as_ref().map_or(true, |(max_t, _)| mtime > *max_t) {
+                                newest = Some((mtime, p));
+                            }
+                        }
+                    }
+                }
+
+                let (_, bin_path) = newest.ok_or_else(|| {
+                    anyhow::anyhow!("No compiled binaries found in .argo/. Run `argo build` first.")
+                })?;
+
+                let stem = bin_path
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+
+                return Ok((bin_path, format!("{stem}.cpp (auto-selected newest)")));
+            }
+        };
+
+        let as_path = Path::new(query_str);
+        if as_path.exists() {
+            let bin = Self::binary_path(as_path);
+            if bin.exists() {
+                return Ok((bin, query_str.to_string()));
+            }
+        }
+
+        let clean_stem = query_str.strip_suffix(".cpp").unwrap_or(query_str);
+        let exact_bin = cache_dir.join(clean_stem).with_extension("out");
+        if exact_bin.exists() {
+            return Ok((exact_bin, format!("{clean_stem}.cpp")));
+        }
+
+        let mut scored: Vec<(f64, PathBuf, String)> = Vec::new();
+        let q_lower = clean_stem.to_lowercase();
+
+        for entry in fs::read_dir(cache_dir)?.flatten() {
+            let p = entry.path();
+            if p.extension().is_some_and(|ext| ext == "out") {
+                let stem = p
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                let score = strsim::jaro_winkler(&q_lower, &stem.to_lowercase());
+
+                if score >= 0.65 {
+                    scored.push((score, p, stem));
+                }
+            }
+        }
+
+        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+        match scored.as_slice() {
+            [(best_score, bin, stem), ..] if *best_score >= 0.72 => {
+                if let Some((runner_up_score, _, runner_up_stem)) = scored.get(1) {
+                    if (best_score - runner_up_score).abs() < 0.05 {
+                        anyhow::bail!(
+                            "Ambiguous target '{query_str}'. Did you mean '{stem}.cpp' ({:.0}%) or '{runner_up_stem}.cpp' ({:.0}%)?",
+                            best_score * 100.0,
+                            runner_up_score * 100.0
+                        );
+                    }
+                }
+
+                Ok((
+                    bin.clone(),
+                    format!("{stem}.cpp (jaro-winkler {:.0}%)", best_score * 100.0),
+                ))
+            }
+            _ => anyhow::bail!("No compiled binary close to '{query_str}' found in .argo/"),
+        }
+    }
 }

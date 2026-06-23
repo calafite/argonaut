@@ -1,12 +1,12 @@
-use anyhow::{Result, anyhow};
-use clap::{Parser, Subcommand};
+use anyhow::Result;
+use clap::builder::styling::{AnsiColor, Effects, Styles};
+use clap::{Parser, Subcommand, ValueHint};
 use std::path::PathBuf;
 
 use crate::bundler::Bundler;
 use crate::config::settings::Config;
 use crate::core::{compiler::Compiler, runner::Runner, scaffold::Scaffold, watcher::Watcher};
 use crate::utils::{paths::get_include_dirs, ui::Ui};
-use clap::builder::styling::{AnsiColor, Effects, Styles};
 
 fn cli_styles() -> Styles {
     Styles::styled()
@@ -49,24 +49,15 @@ impl Cli {
                 Compiler::build(&file, true, &dirs)?;
             }
             Commands::Test {
-                file,
+                target,
                 input,
                 no_input,
             } => {
-                let binary = Compiler::binary_path(&file);
-
-                if !binary.exists() {
-                    return Err(anyhow!(
-                        "No compiled binary found for '{}'. Run `argo build {}` or `argo debug {}` first.",
-                        file.display(),
-                        file.display(),
-                        file.display()
-                    ));
-                }
+                let (binary, display_name) = Compiler::resolve_test_target(target.as_deref())?;
 
                 let use_file = Runner::resolve_input(input, no_input)?;
                 Ui::section("Running Tests");
-                Ui::meta("artifact", binary.display());
+                Ui::meta("target", display_name);
                 Runner::run(&binary, use_file)?;
             }
             Commands::Watch {
@@ -127,7 +118,8 @@ pub enum Commands {
     },
     /// Execute a compiled solution against inputs
     Test {
-        file: PathBuf,
+        #[arg(value_hint = ValueHint::FilePath)]
+        target: Option<String>,
         #[arg(long, conflicts_with = "no_input")]
         input: bool,
         #[arg(long)]

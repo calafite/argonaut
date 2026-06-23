@@ -17,6 +17,7 @@ libc = "0.2.186"
 libseccomp = "0.4.0"
 notify = "8.2.0"
 serde = { version = "1.0.228", features = ["derive"] }
+strsim = "0.11.1"
 toml = "1.1.2"
 tree-sitter = "0.26.9"
 tree-sitter-cpp = "0.23.4"

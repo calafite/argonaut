@@ -80,6 +80,7 @@ dependencies = [
  "libseccomp",
  "notify",
  "serde",
+ "strsim",
  "toml",
  "tree-sitter",
  "tree-sitter-cpp",
