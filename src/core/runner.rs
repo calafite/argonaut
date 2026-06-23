@@ -329,7 +329,7 @@ fn print_gdb_trace_fallback(binary: &Path, use_file: bool, bt_limit: usize) {
                 && trimmed[1..]
                     .chars()
                     .next()
-                    .map_or(false, |c| c.is_ascii_digit())
+                    .is_some_and(|c| c.is_ascii_digit())
             {
                 frames.push(trimmed.to_string());
                 continue;
@@ -342,13 +342,11 @@ fn print_gdb_trace_fallback(binary: &Path, use_file: bool, bt_limit: usize) {
                 continue;
             }
 
-            if frames.is_empty() {
-                if let Some((line_num, _)) = trimmed.split_once(|c: char| c.is_whitespace()) {
-                    if !line_num.is_empty() && line_num.chars().all(|c| c.is_ascii_digit()) {
+            if frames.is_empty()
+                && let Some((line_num, _)) = trimmed.split_once(|c: char| c.is_whitespace())
+                    && !line_num.is_empty() && line_num.chars().all(|c| c.is_ascii_digit()) {
                         offending_line = trimmed.to_string();
                     }
-                }
-            }
         }
 
         Ui::section("Instant GDB Stack Trace (Fallback Mode)");
