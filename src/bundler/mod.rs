@@ -19,6 +19,12 @@ impl Bundler {
     }
 
     pub fn bundle(&self, entry_point: &Path) -> Result<String> {
+        if !entry_point.is_file() {
+            anyhow::bail!(
+                "Invalid target: '{}' is a directory or does not exist.",
+                entry_point.display()
+            );
+        }
         let mut strategy = TreeSitterShaker::new();
         strategy.bundle(entry_point, &self.resolver)
     }

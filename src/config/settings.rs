@@ -16,10 +16,25 @@ pub struct ScaffoldConfig {
     pub template_path: Option<String>,
 }
 
-#[derive(Deserialize, Default, Debug)]
+#[derive(Deserialize, Debug)]
 pub struct BuildConfig {
     #[serde(default)]
     pub include_dirs: Vec<String>,
+    #[serde(default = "default_compiler")]
+    pub compiler: String,
+}
+
+fn default_compiler() -> String {
+    "g++".to_string()
+}
+
+impl Default for BuildConfig {
+    fn default() -> Self {
+        Self {
+            include_dirs: Vec::new(),
+            compiler: default_compiler(),
+        }
+    }
 }
 
 impl Config {

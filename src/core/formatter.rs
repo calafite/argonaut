@@ -14,6 +14,10 @@ impl Formatter {
             .canonicalize()
             .context("File not found or invalid path")?;
 
+        if !abs_file.is_file() {
+            anyhow::bail!("Invalid target: '{}' is a directory.", file.display());
+        }
+
         if Command::new("clang-format")
             .arg("--version")
             .output()

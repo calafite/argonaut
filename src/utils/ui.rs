@@ -13,19 +13,19 @@ impl Ui {
     }
 
     pub fn info<S: Display>(msg: S) {
-        println!("  {} {}", "ℹ".cyan(), msg);
+        println!("  {}  {}", "".cyan(), msg);
     }
 
     pub fn ok<S: Display>(msg: S) {
-        println!("  {} {}", "✔".green(), msg);
+        println!("  {}  {}", "✔".green(), msg);
     }
 
     pub fn fail<S: Display>(msg: S) {
-        println!("  {} {}", "✘".red(), msg);
+        println!("  {}  {}", "✘".red(), msg);
     }
 
     pub fn warn<S: Display>(msg: S) {
-        println!("  {} {}", "⚠".yellow(), msg);
+        println!("  {}  {}", "⚠".yellow(), msg);
     }
 
     pub fn meta<K: Display, V: Display>(key: K, value: V) {

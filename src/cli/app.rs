@@ -39,14 +39,18 @@ impl Cli {
 
                 Ui::section("Release Build");
                 Ui::meta("source", file.display());
-                Compiler::build(&file, false, &dirs)?;
+                Ui::meta("compiler", &config.build.compiler);
+
+                Compiler::build(&file, false, &dirs, &config.build.compiler)?;
             }
             Commands::Debug { file, include_dirs } => {
                 let dirs = get_include_dirs(&include_dirs, &config, &file);
 
                 Ui::section("Debug Build");
                 Ui::meta("source", file.display());
-                Compiler::build(&file, true, &dirs)?;
+                Ui::meta("compiler", &config.build.compiler);
+
+                Compiler::build(&file, true, &dirs, &config.build.compiler)?;
             }
             Commands::Test {
                 target,

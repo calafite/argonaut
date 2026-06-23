@@ -22,23 +22,27 @@ impl Compiler {
         Ok(dir.to_path_buf())
     }
 
-    fn has_sanitizers() -> bool {
+    fn has_sanitizers(compiler_cmd: &str) -> bool {
         *HAS_SANITIZERS.get_or_init(|| {
-            Command::new("g++")
-                .args([
-                    "-fsanitize=address,undefined",
-                    "-x",
-                    "c++",
-                    "-",
-                    "-o",
-                    "/dev/null",
-                ])
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false)
+            let mut parts = compiler_cmd.split_whitespace();
+            let bin = parts.next().unwrap_or("g++");
+
+            let mut cmd = Command::new(bin);
+            cmd.args(parts);
+            cmd.args([
+                "-fsanitize=address,undefined",
+                "-x",
+                "c++",
+                "-",
+                "-o",
+                "/dev/null",
+            ])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
         })
     }
 
@@ -50,14 +54,31 @@ impl Compiler {
         out_bin
     }
 
-    pub fn build(file: &Path, debug: bool, include_dirs: &[PathBuf]) -> Result<PathBuf> {
-        let cache_dir = Self::setup_cache()?;
+    pub fn build(
+        file: &Path,
+        debug: bool,
+        include_dirs: &[PathBuf],
+        compiler_cmd: &str,
+    ) -> Result<PathBuf> {
+        if !file.is_file() {
+            anyhow::bail!(
+                "Invalid target: '{}' is a directory or does not exist.",
+                file.display()
+            );
+        }
 
+        let cache_dir = Self::setup_cache()?;
         let file_stem = file.file_stem().unwrap_or_default();
         let mut out_bin = cache_dir.join(file_stem);
         out_bin.set_extension("out");
 
-        let mut cmd = Command::new("g++");
+        let mut parts = compiler_cmd.split_whitespace();
+        let bin = parts
+            .next()
+            .ok_or_else(|| anyhow!("Compiler command cannot be empty"))?;
+
+        let mut cmd = Command::new(bin);
+        cmd.args(parts);
 
         cmd.args([
             "-std=c++20",
@@ -74,14 +95,14 @@ impl Compiler {
 
         if debug {
             cmd.args(["-g", "-O1"]);
-            if Self::has_sanitizers() {
+            if Self::has_sanitizers(compiler_cmd) {
                 cmd.args(["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]);
                 Ui::meta("sanitizers", "address, undefined");
             } else {
-                Ui::warn("sanitizers unavailable");
+                Ui::warn(format!("sanitizers unavailable for '{}'", compiler_cmd));
             }
         } else {
-            cmd.args(["-O2", "-pipe"]);
+            cmd.args(["-O2"]);
         }
 
         cmd.arg(file);
@@ -92,7 +113,7 @@ impl Compiler {
 
         let status = cmd
             .status()
-            .context("Failed to invoke g++ compiler. Is it installed?")?;
+            .with_context(|| format!("Failed to invoke '{}'. Is it installed?", bin))?;
 
         if !status.success() {
             return Err(anyhow!("Compilation failed with status: {}", status));
