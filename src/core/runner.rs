@@ -2,7 +2,7 @@ use crate::utils::ui::Ui;
 use anyhow::{Result, anyhow};
 use colored::Colorize;
 use inquire::Confirm;
-use libc::{SIGABRT, SIGBUS, SIGFPE, SIGILL, SIGSEGV}; // <--- Native OS flags
+use libc::{RUSAGE_CHILDREN, SIGABRT, SIGBUS, SIGFPE, SIGILL, SIGSEGV, getrusage, rusage};
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::path::Path;
@@ -51,7 +51,6 @@ impl Runner {
         }
     }
 
-    /// Backward-compatible facade calling default flags
     pub fn run(binary: &Path, use_file: bool) -> Result<()> {
         Self::run_with_flags(binary, use_file, RunnerFlags::default())
     }
@@ -86,6 +85,9 @@ impl Runner {
         child_cmd.stderr(Stdio::piped());
 
         println!();
+
+        #[cfg(unix)]
+        let cpu_start_ns = get_children_cpu_nanos();
 
         let start = Instant::now();
         let mut child = child_cmd.spawn()?;
@@ -124,7 +126,11 @@ impl Runner {
         });
 
         let status = child.wait()?;
-        let duration = start.elapsed();
+        let wall_nanos = start.elapsed().as_nanos();
+
+        #[cfg(unix)]
+        let cpu_nanos = get_children_cpu_nanos().saturating_sub(cpu_start_ns);
+        let exec_time_ns = if use_file { wall_nanos } else { cpu_nanos };
 
         let _ = stdout_thread.join();
         let _ = stderr_thread.join();
@@ -147,7 +153,7 @@ impl Runner {
                     if !sig_desc.is_empty() {
                         Ui::fail(format!("process terminated by {sig_desc}"));
                         print_gdb_trace(binary, use_file, flags.bt_limit);
-                        Ui::time(duration);
+                        Ui::time(exec_time_ns);
                         return Ok(());
                     }
                 }
@@ -156,8 +162,25 @@ impl Runner {
             Ui::fail(format!("process exited with {}", status));
         }
 
-        Ui::time(duration);
+        Ui::time(exec_time_ns);
         Ok(())
+    }
+}
+
+#[cfg(unix)]
+fn get_children_cpu_nanos() -> u128 {
+    let mut usage = std::mem::MaybeUninit::<rusage>::uninit();
+    unsafe {
+        if getrusage(RUSAGE_CHILDREN, usage.as_mut_ptr()) == 0 {
+            let u = usage.assume_init();
+            let utime =
+                (u.ru_utime.tv_sec as u128) * 1_000_000_000 + (u.ru_utime.tv_usec as u128) * 1_000;
+            let stime =
+                (u.ru_stime.tv_sec as u128) * 1_000_000_000 + (u.ru_stime.tv_usec as u128) * 1_000;
+            utime + stime
+        } else {
+            0
+        }
     }
 }
 
@@ -213,7 +236,7 @@ fn print_gdb_trace(binary: &Path, use_file: bool, bt_limit: usize) {
                 println!("  {}", line.cyan().bold());
             } else if trimmed.starts_with("Program received") {
                 println!("  {}", line.red().bold());
-            } else if trimmed.chars().next().is_some_and(|c| c.is_ascii_digit())
+            } else if trimmed.chars().next().map_or(false, |c| c.is_ascii_digit())
                 && trimmed.contains('\t')
             {
                 println!("  {}", line.yellow().bold());

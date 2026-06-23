@@ -32,10 +32,8 @@ impl Ui {
         println!("  {:<12} {}", format!("[{}]", key).dimmed(), value);
     }
 
-    pub fn time(duration: std::time::Duration) {
-        println!(
-            "\n  {}",
-            format!("real: {:.3} sec", duration.as_secs_f64()).dimmed()
-        );
+    pub fn time(nanos: u128) {
+        let ms = nanos as f64 / 1_000_000.0;
+        println!("\n  {}", format!("time: {nanos} ns ({ms:.4} ms)").dimmed());
     }
 }
