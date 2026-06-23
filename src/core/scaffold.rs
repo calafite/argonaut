@@ -22,21 +22,21 @@ impl Scaffold {
                 fs::copy(&template_path, &target_file).with_context(|| {
                     format!("Failed to copy template from {}", template_path.display())
                 })?;
-                Ui::ok(format!("Created {} (from template)", target_file.display()));
+                Ui::ok(format!("created {} (from template)", target_file.display()));
                 return Ok(());
             } else {
                 Ui::warn(format!(
-                    "Template not found at: {}",
+                    "template not found at: {}",
                     template_path.display()
                 ));
             }
         }
 
-        Ui::warn("Creating empty file instead");
+        Ui::warn("creating empty file instead");
         fs::write(&target_file, "")
             .with_context(|| format!("Failed to write empty file: {}", target_file.display()))?;
 
-        Ui::ok(target_file.display());
+        Ui::ok(format!("created {}", target_file.display()));
         Ok(())
     }
 }

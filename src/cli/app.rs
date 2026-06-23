@@ -99,7 +99,7 @@ impl Cli {
                 });
 
                 std::fs::write(&out_path, bundled)?;
-                Ui::ok(format!("Bundled to {}", out_path.display()));
+                Ui::ok(format!("bundled to {}", out_path.display()));
             }
             Commands::Format { file } => {
                 Ui::section("Code Formatter");

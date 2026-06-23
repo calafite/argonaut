@@ -141,36 +141,40 @@ impl Compiler {
             }
 
             if !output.status.success() {
-                Ui::fail(format!(
-                    "Compilation failed: {} errors, {} warnings",
+                let mut err_str = format!(
+                    "compilation failed: {} errors, {} warnings",
                     error_count, warning_count
+                );
+                if let Some(err_msg) = first_error {
+                    err_str.push_str(&format!("\n  {}  {}", "↳".dimmed(), err_msg.trim().red()));
+                }
+                err_str.push_str(&format!(
+                    "\n  {}  {}",
+                    "".cyan(),
+                    format!("full log saved to {}", error_file.display()).dimmed()
                 ));
 
-                if let Some(err_msg) = first_error {
-                    println!("  {} {}", "↳".dimmed(), err_msg.red());
-                }
-
-                Ui::info(format!("Full log saved to {}", error_file.display()));
-                return Err(anyhow!("Build aborted due to compilation errors."));
+                return Err(anyhow::anyhow!(err_str));
             } else if warning_count > 0 {
                 Ui::warn(format!(
                     "compiled successfully with {} warnings",
                     warning_count
                 ));
-                Ui::info(format!("Details saved to {}", error_file.display()));
-                println!();
+                Ui::info(format!("details saved to {}", error_file.display()));
             } else {
-                Ui::ok("compiled successfully\n");
+                Ui::ok("compiled successfully");
             }
         } else {
             let status = cmd
                 .status()
                 .with_context(|| format!("Failed to invoke '{}'. Is it installed?", bin))?;
 
+            println!();
+
             if !status.success() {
-                return Err(anyhow!("Compilation failed with status: {}", status));
+                return Err(anyhow::anyhow!("compilation failed ({})", status));
             }
-            Ui::ok("compiled successfully\n");
+            Ui::ok("compiled successfully");
         }
 
         Ok(out_bin)

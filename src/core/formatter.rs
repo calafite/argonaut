@@ -62,20 +62,21 @@ impl Formatter {
 
             if using_central {
                 Ui::ok(format!(
-                    "Formatted {} (using central config)",
+                    "formatted {} (using central config)",
                     file.display()
                 ));
             } else {
-                Ui::ok(format!("Formatted {} (using local config)", file.display()));
+                Ui::ok(format!("formatted {} (using local config)", file.display()));
             }
         } else {
-            Ui::fail(format!("Formatter failed on {}", file.display()));
+            let mut err_str = format!("formatter failed on {}", file.display());
             let err_msg = String::from_utf8_lossy(&output.stderr);
             if !err_msg.trim().is_empty() {
                 for line in err_msg.lines() {
-                    println!("  {} {}", "↳".dimmed(), line.trim().red());
+                    err_str.push_str(&format!("\n  {}  {}", "↳".dimmed(), line.trim().red()));
                 }
             }
+            return Err(anyhow::anyhow!(err_str));
         }
 
         Ok(())

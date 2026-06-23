@@ -151,15 +151,15 @@ impl Runner {
                     };
 
                     if !sig_desc.is_empty() {
-                        Ui::fail(format!("process terminated by {sig_desc}"));
                         print_gdb_trace(binary, use_file, flags.bt_limit);
                         Ui::time(exec_time_ns);
-                        return Ok(());
+                        return Err(anyhow::anyhow!("process terminated by {sig_desc}"));
                     }
                 }
             }
 
-            Ui::fail(format!("process exited with {}", status));
+            Ui::time(exec_time_ns);
+            return Err(anyhow::anyhow!("process exited with {}", status));
         }
 
         Ui::time(exec_time_ns);
