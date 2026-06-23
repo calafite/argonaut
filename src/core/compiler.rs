@@ -108,8 +108,6 @@ impl Compiler {
         cmd.arg("-o");
         cmd.arg(&out_bin);
 
-        println!();
-
         if log_file {
             let output = cmd
                 .output()
@@ -168,8 +166,6 @@ impl Compiler {
             let status = cmd
                 .status()
                 .with_context(|| format!("Failed to invoke '{}'. Is it installed?", bin))?;
-
-            println!();
 
             if !status.success() {
                 return Err(anyhow::anyhow!("compilation failed ({})", status));
