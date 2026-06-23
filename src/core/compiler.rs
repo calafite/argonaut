@@ -116,10 +116,11 @@ impl Compiler {
                     let p = entry.path();
                     if p.extension().is_some_and(|ext| ext == "out")
                         && let Ok(meta) = entry.metadata()
-                            && let Ok(mtime) = meta.modified()
-                            && newest.as_ref().is_none_or(|(max_t, _)| mtime > *max_t) {
-                                newest = Some((mtime, p));
-                            }
+                        && let Ok(mtime) = meta.modified()
+                        && newest.as_ref().is_none_or(|(max_t, _)| mtime > *max_t)
+                    {
+                        newest = Some((mtime, p));
+                    }
                 }
 
                 let (_, bin_path) = newest.ok_or_else(|| {
@@ -174,13 +175,14 @@ impl Compiler {
         match scored.as_slice() {
             [(best_score, bin, stem), ..] if *best_score >= 0.72 => {
                 if let Some((runner_up_score, _, runner_up_stem)) = scored.get(1)
-                    && (best_score - runner_up_score).abs() < 0.05 {
-                        anyhow::bail!(
-                            "Ambiguous target '{query_str}'. Did you mean '{stem}.cpp' ({:.0}%) or '{runner_up_stem}.cpp' ({:.0}%)?",
-                            best_score * 100.0,
-                            runner_up_score * 100.0
-                        );
-                    }
+                    && (best_score - runner_up_score).abs() < 0.05
+                {
+                    anyhow::bail!(
+                        "Ambiguous target '{query_str}'. Did you mean '{stem}.cpp' ({:.0}%) or '{runner_up_stem}.cpp' ({:.0}%)?",
+                        best_score * 100.0,
+                        runner_up_score * 100.0
+                    );
+                }
 
                 Ok((
                     bin.clone(),
