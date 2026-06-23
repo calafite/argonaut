@@ -13,14 +13,24 @@ static HAS_SANITIZERS: OnceLock<bool> = OnceLock::new();
 impl Compiler {
     const CACHE_DIR: &'static str = ".argo";
 
-    fn setup_cache() -> Result<PathBuf> {
-        let dir = Path::new(Self::CACHE_DIR);
+    fn setup_cache(file: &Path) -> Result<PathBuf> {
+        let parent = file.parent().unwrap_or_else(|| Path::new("."));
+        let dir = parent.join(Self::CACHE_DIR);
         if !dir.exists() {
-            fs::create_dir_all(dir).context("Failed to create .argo cache directory")?;
+            fs::create_dir_all(&dir).context("Failed to create .argo cache directory")?;
             fs::write(dir.join(".gitignore"), "*\n")
                 .context("Failed to write .gitignore in cache")?;
         }
-        Ok(dir.to_path_buf())
+        Ok(dir)
+    }
+
+    pub fn binary_path(file: &Path) -> PathBuf {
+        let parent = file.parent().unwrap_or_else(|| Path::new("."));
+        let cache_dir = parent.join(Self::CACHE_DIR);
+        let file_stem = file.file_stem().unwrap_or_default();
+        let mut out_bin = cache_dir.join(file_stem);
+        out_bin.set_extension("out");
+        out_bin
     }
 
     fn has_sanitizers(compiler_cmd: &str) -> bool {
@@ -47,14 +57,6 @@ impl Compiler {
         })
     }
 
-    pub fn binary_path(file: &Path) -> PathBuf {
-        let cache_dir = Path::new(Self::CACHE_DIR);
-        let file_stem = file.file_stem().unwrap_or_default();
-        let mut out_bin = cache_dir.join(file_stem);
-        out_bin.set_extension("out");
-        out_bin
-    }
-
     pub fn build(
         file: &Path,
         debug: bool,
@@ -69,7 +71,7 @@ impl Compiler {
             );
         }
 
-        let cache_dir = Self::setup_cache()?;
+        let cache_dir = Self::setup_cache(file)?;
         let file_stem = file.file_stem().unwrap_or_default();
         let mut out_bin = cache_dir.join(file_stem);
         out_bin.set_extension("out");
@@ -103,6 +105,8 @@ impl Compiler {
         } else {
             cmd.args(["-O2"]);
         }
+
+        println!();
 
         cmd.arg(file);
         cmd.arg("-o");
@@ -177,37 +181,53 @@ impl Compiler {
     }
 
     pub fn resolve_test_target(query: Option<&str>) -> Result<(PathBuf, String)> {
-        let cache_dir = Path::new(Self::CACHE_DIR);
-        if !cache_dir.exists() {
-            anyhow::bail!("No .argo cache directory found. Run `argo build` first.");
+        let current_dir = std::env::current_dir()?;
+        let mut candidates = Vec::new();
+
+        let mut check_dir = |dir: &Path| {
+            let argo_dir = dir.join(Self::CACHE_DIR);
+            if argo_dir.exists() && argo_dir.is_dir() {
+                if let Ok(entries) = fs::read_dir(argo_dir) {
+                    for entry in entries.flatten() {
+                        let p = entry.path();
+                        if p.extension().is_some_and(|ext| ext == "out") {
+                            if let Ok(meta) = entry.metadata() {
+                                if let Ok(mtime) = meta.modified() {
+                                    let stem = p
+                                        .file_stem()
+                                        .unwrap_or_default()
+                                        .to_string_lossy()
+                                        .to_string();
+                                    candidates.push((mtime, p, stem));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        check_dir(&current_dir);
+        if let Ok(entries) = fs::read_dir(&current_dir) {
+            for entry in entries.flatten() {
+                if entry.path().is_dir() && entry.file_name() != Self::CACHE_DIR {
+                    check_dir(&entry.path());
+                }
+            }
+        }
+
+        if candidates.is_empty() {
+            anyhow::bail!("No compiled binaries found in local tree. Run `argo build` first.");
         }
 
         let query_str = match query {
             Some(q) if !q.trim().is_empty() => q.trim(),
             _ => {
-                let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
-                for entry in fs::read_dir(cache_dir)?.flatten() {
-                    let p = entry.path();
-                    if p.extension().is_some_and(|ext| ext == "out")
-                        && let Ok(meta) = entry.metadata()
-                        && let Ok(mtime) = meta.modified()
-                        && newest.as_ref().is_none_or(|(max_t, _)| mtime > *max_t)
-                    {
-                        newest = Some((mtime, p));
-                    }
-                }
-
-                let (_, bin_path) = newest.ok_or_else(|| {
-                    anyhow::anyhow!("No compiled binaries found in .argo/. Run `argo build` first.")
-                })?;
-
-                let stem = bin_path
-                    .file_stem()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string();
-
-                return Ok((bin_path, format!("{stem}.cpp (auto-selected newest)")));
+                let best = candidates
+                    .into_iter()
+                    .max_by_key(|(mtime, _, _)| *mtime)
+                    .unwrap();
+                return Ok((best.1, format!("{}.cpp (auto-selected newest)", best.2)));
             }
         };
 
@@ -220,27 +240,20 @@ impl Compiler {
         }
 
         let clean_stem = query_str.strip_suffix(".cpp").unwrap_or(query_str);
-        let exact_bin = cache_dir.join(clean_stem).with_extension("out");
-        if exact_bin.exists() {
-            return Ok((exact_bin, format!("{clean_stem}.cpp")));
+
+        for (_, p, stem) in &candidates {
+            if stem == clean_stem {
+                return Ok((p.clone(), format!("{}.cpp", stem)));
+            }
         }
 
         let mut scored: Vec<(f64, PathBuf, String)> = Vec::new();
         let q_lower = clean_stem.to_lowercase();
 
-        for entry in fs::read_dir(cache_dir)?.flatten() {
-            let p = entry.path();
-            if p.extension().is_some_and(|ext| ext == "out") {
-                let stem = p
-                    .file_stem()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string();
-                let score = strsim::jaro_winkler(&q_lower, &stem.to_lowercase());
-
-                if score >= 0.65 {
-                    scored.push((score, p, stem));
-                }
+        for (_, p, stem) in candidates {
+            let score = strsim::jaro_winkler(&q_lower, &stem.to_lowercase());
+            if score >= 0.65 {
+                scored.push((score, p, stem));
             }
         }
 
@@ -263,7 +276,7 @@ impl Compiler {
                     format!("{stem}.cpp (jaro-winkler {:.0}%)", best_score * 100.0),
                 ))
             }
-            _ => anyhow::bail!("No compiled binary close to '{query_str}' found in .argo/"),
+            _ => anyhow::bail!("No compiled binary close to '{query_str}' found."),
         }
     }
 }

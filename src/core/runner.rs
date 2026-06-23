@@ -34,17 +34,24 @@ impl Default for RunnerFlags {
 pub struct Runner;
 
 impl Runner {
-    pub fn resolve_input(force_input: bool, force_no_input: bool) -> Result<bool> {
-        let input_file = Path::new("input.txt");
+    pub fn resolve_input(binary: &Path, force_input: bool, force_no_input: bool) -> Result<bool> {
+        let parent_dir = binary
+            .parent()
+            .and_then(|p| p.parent())
+            .unwrap_or(Path::new("."));
+        let input_file = parent_dir.join("input.txt");
 
         if force_input {
             Ok(true)
         } else if force_no_input {
             Ok(false)
         } else if input_file.exists() {
-            let choice = Confirm::new("Found input.txt. Use it for stdin?")
-                .with_default(true)
-                .prompt()?;
+            let choice = Confirm::new(&format!(
+                "Found {}. Use it for stdin?",
+                input_file.display()
+            ))
+            .with_default(true)
+            .prompt()?;
             Ok(choice)
         } else {
             Ok(false)
@@ -56,7 +63,11 @@ impl Runner {
     }
 
     pub fn run_with_flags(binary: &Path, use_file: bool, flags: RunnerFlags) -> Result<()> {
-        let input_file = Path::new("input.txt");
+        let parent_dir = binary
+            .parent()
+            .and_then(|p| p.parent())
+            .unwrap_or(Path::new("."));
+        let input_file = parent_dir.join("input.txt");
         let mut child_cmd = Command::new(binary);
 
         #[cfg(target_os = "linux")]
@@ -71,9 +82,9 @@ impl Runner {
 
         if use_file {
             if !input_file.exists() {
-                return Err(anyhow!("input.txt not found"));
+                return Err(anyhow!("{} not found", input_file.display()));
             }
-            Ui::meta("input", "input.txt");
+            Ui::meta("input", input_file.display());
             let file = File::open(input_file)?;
             child_cmd.stdin(Stdio::from(file));
         } else {
@@ -185,19 +196,28 @@ fn get_children_cpu_nanos() -> u128 {
 }
 
 fn print_gdb_trace(binary: &Path, use_file: bool, bt_limit: usize) {
-    let input_redirect = if use_file { "input.txt" } else { "/dev/null" };
+    let parent_dir = binary
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap_or(Path::new("."));
+    let input_redirect = if use_file {
+        parent_dir.join("input.txt").to_string_lossy().to_string()
+    } else {
+        "/dev/null".to_string()
+    };
 
-    let _ = std::fs::create_dir_all(".argo");
-    let tracer_path = Path::new(".argo/tracer.py");
-    if std::fs::write(tracer_path, include_str!("tracer.py")).is_err() {
+    let argo_dir = binary.parent().unwrap_or(Path::new("."));
+    let _ = std::fs::create_dir_all(argo_dir);
+    let tracer_path = argo_dir.join("tracer.py");
+    if std::fs::write(&tracer_path, include_str!("tracer.py")).is_err() {
         Ui::warn("Could not write Python tracer. Falling back to CLI parsing...");
-        print_gdb_trace_fallback(binary, use_file, bt_limit);
+        print_gdb_trace_fallback(binary, &input_redirect, bt_limit);
         return;
     }
 
     let mut gdb = Command::new("gdb");
 
-    gdb.env("ARGO_INPUT_REDIRECT", input_redirect)
+    gdb.env("ARGO_INPUT_REDIRECT", &input_redirect)
         .env("ARGO_BT_LIMIT", bt_limit.to_string())
         .env("LC_ALL", "C")
         .args([
@@ -223,7 +243,7 @@ fn print_gdb_trace(binary: &Path, use_file: bool, bt_limit: usize) {
     );
 
     if combined.contains("Python scripting is not supported") || !combined.contains("@@ARGO_") {
-        print_gdb_trace_fallback(binary, use_file, bt_limit);
+        print_gdb_trace_fallback(binary, &input_redirect, bt_limit);
         return;
     }
 
@@ -283,14 +303,9 @@ fn print_gdb_trace(binary: &Path, use_file: bool, bt_limit: usize) {
     }
 }
 
-fn print_gdb_trace_fallback(binary: &Path, use_file: bool, bt_limit: usize) {
-    let run_redirect = if use_file {
-        "run < input.txt > /dev/null 2>&1"
-    } else {
-        "run < /dev/null > /dev/null 2>&1"
-    };
+fn print_gdb_trace_fallback(binary: &Path, input_redirect: &str, bt_limit: usize) {
+    let run_redirect = format!("run < {} > /dev/null 2>&1", input_redirect);
     let limit_cmd = format!("set backtrace limit {bt_limit}");
-
     let mut gdb = Command::new("gdb");
     gdb.env("LC_ALL", "C");
     gdb.args([
@@ -301,7 +316,7 @@ fn print_gdb_trace_fallback(binary: &Path, use_file: bool, bt_limit: usize) {
         "-ex",
         &limit_cmd,
         "-ex",
-        run_redirect,
+        &run_redirect,
         "-ex",
         "bt",
         binary.to_str().unwrap_or(""),

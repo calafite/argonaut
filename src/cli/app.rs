@@ -71,14 +71,14 @@ impl Cli {
             } => {
                 let (binary, display_name) = Compiler::resolve_test_target(target.as_deref())?;
 
-                let use_file = Runner::resolve_input(input, no_input)?;
+                let use_file = Runner::resolve_input(&binary, input, no_input)?;
                 Ui::section("Running Tests");
                 Ui::meta("target", display_name);
                 Runner::run(&binary, use_file)?;
             }
-            Commands::New { dir, name } => {
+            Commands::New { name } => {
                 Ui::section("Project Scaffold");
-                Scaffold::create(&dir, &name, &config)?;
+                Scaffold::create(&name, &config)?;
             }
             Commands::Bundle {
                 file,
@@ -135,16 +135,13 @@ pub enum Commands {
         no_input: bool,
     },
     /// Scaffold a new solution file
-    New {
-        dir: PathBuf,
-        #[arg(default_value = "main")]
-        name: String,
-    },
+    New { name: String },
     /// Bundle a solution file into a single monolithic file
     Bundle {
         file: PathBuf,
         #[arg(short, long)]
         out: Option<PathBuf>,
+        /// Directories to compile against.
         #[arg(short = 'I', long = "include")]
         include_dirs: Vec<String>,
     },

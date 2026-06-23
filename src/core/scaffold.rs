@@ -2,20 +2,22 @@ use crate::config::settings::Config;
 use crate::utils::{paths::expand_path, ui::Ui};
 use anyhow::{Context, Result};
 use std::fs;
-use std::path::Path;
 
 pub struct Scaffold;
 
 impl Scaffold {
-    pub fn create(dir: &Path, name: &str, config: &Config) -> Result<()> {
+    pub fn create(name: &str, config: &Config) -> Result<()> {
+        let current_dir =
+            std::env::current_dir().context("Failed to determine current directory")?;
+        let dir = current_dir.join(name);
+
         if !dir.exists() {
-            fs::create_dir_all(dir)
+            fs::create_dir_all(&dir)
                 .with_context(|| format!("Failed to create directory: {}", dir.display()))?;
         }
 
         let mut target_file = dir.join(name);
         target_file.set_extension("cpp");
-
         if let Some(template_str) = &config.scaffold.template_path {
             let template_path = expand_path(template_str);
             if template_path.exists() {
