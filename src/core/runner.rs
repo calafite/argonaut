@@ -88,7 +88,7 @@ impl Runner {
             let file = File::open(input_file)?;
             child_cmd.stdin(Stdio::from(file));
         } else {
-            Ui::meta("input", "interactive (your typing is default color)");
+            Ui::meta("input", "interactive");
             child_cmd.stdin(Stdio::inherit());
         }
 
@@ -115,7 +115,7 @@ impl Runner {
                 if n == 0 {
                     break;
                 }
-                let _ = out.write_all(b"\x1b[1;96m");
+                let _ = out.write_all(b"\x1b[1;93m");
                 let _ = out.write_all(&buf[..n]);
                 let _ = out.write_all(b"\x1b[0m");
                 let _ = out.flush();

@@ -70,7 +70,6 @@ impl Cli {
                 no_input,
             } => {
                 let (binary, display_name) = Compiler::resolve_test_target(target.as_deref())?;
-
                 let use_file = Runner::resolve_input(&binary, input, no_input)?;
                 Ui::section("Running Tests");
                 Ui::meta("target", display_name);
