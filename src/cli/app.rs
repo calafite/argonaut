@@ -21,7 +21,7 @@ fn cli_styles() -> Styles {
 
 #[derive(Parser)]
 #[command(name = "argo")]
-#[command(version = "1.0.0")]
+#[command(version = "0.3.4")]
 #[command(about = "Competitive Programming Toolkit", long_about = None)]
 #[command(styles = cli_styles())]
 pub struct Cli {
