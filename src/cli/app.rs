@@ -19,9 +19,28 @@ fn cli_styles() -> Styles {
         .invalid(AnsiColor::Yellow.on_default() | Effects::BOLD)
 }
 
+fn find_cross_compiler() -> String {
+    let candidates = [
+        "riscv64-buildroot-linux-gnu-g++",
+        "riscv64-linux-gnu-g++",
+        "riscv64-unknown-linux-gnu-g++",
+    ];
+    if let Ok(path) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path) {
+            for candidate in candidates {
+                let candidate_path = dir.join(candidate);
+                if candidate_path.exists() {
+                    return candidate.to_string();
+                }
+            }
+        }
+    }
+    "riscv64-linux-gnu-g++".to_string()
+}
+
 #[derive(Parser)]
 #[command(name = "argo")]
-#[command(version = "0.3.4")]
+#[command(version = "1.0.0")]
 #[command(about = "Competitive Programming Toolkit", long_about = None)]
 #[command(styles = cli_styles())]
 pub struct Cli {
@@ -133,7 +152,7 @@ impl Cli {
                 Ui::section("Assembly Peek");
                 Ui::meta("source", file.display());
                 let compiler = if reduced {
-                    "riscv64-linux-gnu-g++".to_string()
+                    find_cross_compiler()
                 } else {
                     config.build.compiler.clone()
                 };
