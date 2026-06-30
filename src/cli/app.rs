@@ -34,33 +34,47 @@ impl Cli {
         let config = Config::load()?;
 
         match self.command {
-            Commands::Build { file, include_dirs } => {
+            Commands::Build {
+                file,
+                include_dirs,
+                std,
+            } => {
+                let std_version = std.unwrap_or(config.build.std);
                 let dirs = get_include_dirs(&include_dirs, &config, &file);
 
                 Ui::section("Release Build");
                 Ui::meta("source", file.display());
                 Ui::meta("compiler", &config.build.compiler);
+                Ui::meta("std", format!("C++{}", std_version));
 
                 Compiler::build(
                     &file,
                     false,
                     &dirs,
                     &config.build.compiler,
+                    std_version,
                     config.build.log_file,
                 )?;
             }
-            Commands::Debug { file, include_dirs } => {
+            Commands::Debug {
+                file,
+                include_dirs,
+                std,
+            } => {
+                let std_version = std.unwrap_or(config.build.std);
                 let dirs = get_include_dirs(&include_dirs, &config, &file);
 
                 Ui::section("Debug Build");
                 Ui::meta("source", file.display());
                 Ui::meta("compiler", &config.build.compiler);
+                Ui::meta("std", format!("C++{}", std_version));
 
                 Compiler::build(
                     &file,
                     true,
                     &dirs,
                     &config.build.compiler,
+                    std_version,
                     config.build.log_file,
                 )?;
             }
@@ -70,6 +84,7 @@ impl Cli {
                 no_input,
             } => {
                 let (binary, display_name) = Compiler::resolve_test_target(target.as_deref())?;
+
                 let use_file = Runner::resolve_input(&binary, input, no_input)?;
                 Ui::section("Running Tests");
                 Ui::meta("target", display_name);
@@ -104,6 +119,29 @@ impl Cli {
                 Ui::section("Code Formatter");
                 Formatter::format(&file)?;
             }
+            Commands::Peek {
+                file,
+                out,
+                debug,
+                reduced,
+                include_dirs,
+                std,
+            } => {
+                let std_version = std.unwrap_or(config.build.std);
+                let dirs = get_include_dirs(&include_dirs, &config, &file);
+
+                Ui::section("Assembly Peek");
+                Ui::meta("source", file.display());
+                let compiler = if reduced {
+                    "riscv64-linux-gnu-g++".to_string()
+                } else {
+                    config.build.compiler.clone()
+                };
+                Ui::meta("compiler", &compiler);
+                Ui::meta("std", format!("C++{}", std_version));
+
+                Compiler::peek(&file, out.as_deref(), debug, &dirs, &compiler, std_version)?;
+            }
         }
 
         Ok(())
@@ -117,12 +155,16 @@ pub enum Commands {
         file: PathBuf,
         #[arg(short = 'I', long = "include")]
         include_dirs: Vec<String>,
+        #[arg(short = 's', long = "std")]
+        std: Option<u32>,
     },
     /// Compile solution with debug symbols & sanitizers
     Debug {
         file: PathBuf,
         #[arg(short = 'I', long = "include")]
         include_dirs: Vec<String>,
+        #[arg(short = 's', long = "std")]
+        std: Option<u32>,
     },
     /// Execute a compiled solution against inputs
     Test {
@@ -148,5 +190,20 @@ pub enum Commands {
     Format {
         #[arg(value_hint = ValueHint::FilePath)]
         file: PathBuf,
+    },
+    /// Output the intermediate assembly generated in the build
+    Peek {
+        #[arg(value_hint = ValueHint::FilePath)]
+        file: PathBuf,
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+        #[arg(long)]
+        debug: bool,
+        #[arg(long)]
+        reduced: bool,
+        #[arg(short = 'I', long = "include")]
+        include_dirs: Vec<String>,
+        #[arg(short = 's', long = "std")]
+        std: Option<u32>,
     },
 }

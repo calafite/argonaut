@@ -57,25 +57,14 @@ impl Compiler {
         })
     }
 
-    pub fn build(
-        file: &Path,
+    /// Abstracts the process of generating standard compilation commands
+    fn create_base_cmd(
+        compiler_cmd: &str,
+        std_version: u32,
         debug: bool,
         include_dirs: &[PathBuf],
-        compiler_cmd: &str,
-        log_file: bool,
-    ) -> Result<PathBuf> {
-        if !file.is_file() {
-            anyhow::bail!(
-                "Invalid target: '{}' is a directory or does not exist.",
-                file.display()
-            );
-        }
-
-        let cache_dir = Self::setup_cache(file)?;
-        let file_stem = file.file_stem().unwrap_or_default();
-        let mut out_bin = cache_dir.join(file_stem);
-        out_bin.set_extension("out");
-
+        color_diagnostics: bool,
+    ) -> Result<Command> {
         let mut parts = compiler_cmd.split_whitespace();
         let bin = parts
             .next()
@@ -84,9 +73,10 @@ impl Compiler {
         let mut cmd = Command::new(bin);
         cmd.args(parts);
 
-        cmd.args(["-std=c++20", "-Wall", "-Wextra", "-Wshadow", "-DLOCAL"]);
+        cmd.arg(format!("-std=c++{std_version}"));
+        cmd.args(["-Wall", "-Wextra", "-Wshadow", "-DLOCAL"]);
 
-        if !log_file {
+        if color_diagnostics {
             cmd.arg("-fdiagnostics-color=always");
         }
 
@@ -106,6 +96,32 @@ impl Compiler {
             cmd.args(["-O2"]);
         }
 
+        Ok(cmd)
+    }
+
+    pub fn build(
+        file: &Path,
+        debug: bool,
+        include_dirs: &[PathBuf],
+        compiler_cmd: &str,
+        std_version: u32,
+        log_file: bool,
+    ) -> Result<PathBuf> {
+        if !file.is_file() {
+            anyhow::bail!(
+                "Invalid target: '{}' is a directory or does not exist.",
+                file.display()
+            );
+        }
+
+        let cache_dir = Self::setup_cache(file)?;
+        let file_stem = file.file_stem().unwrap_or_default();
+        let mut out_bin = cache_dir.join(file_stem);
+        out_bin.set_extension("out");
+
+        let mut cmd =
+            Self::create_base_cmd(compiler_cmd, std_version, debug, include_dirs, !log_file)?;
+
         println!();
 
         cmd.arg(file);
@@ -113,9 +129,12 @@ impl Compiler {
         cmd.arg(&out_bin);
 
         if log_file {
-            let output = cmd
-                .output()
-                .with_context(|| format!("Failed to invoke '{}'. Is it installed?", bin))?;
+            let output = cmd.output().with_context(|| {
+                format!(
+                    "Failed to invoke '{}'. Is it installed?",
+                    compiler_cmd.split_whitespace().next().unwrap_or("")
+                )
+            })?;
 
             let mut error_file = cache_dir.join(file_stem);
             error_file.set_extension("errors");
@@ -167,9 +186,12 @@ impl Compiler {
                 Ui::ok("compiled successfully");
             }
         } else {
-            let status = cmd
-                .status()
-                .with_context(|| format!("Failed to invoke '{}'. Is it installed?", bin))?;
+            let status = cmd.status().with_context(|| {
+                format!(
+                    "Failed to invoke '{}'. Is it installed?",
+                    compiler_cmd.split_whitespace().next().unwrap_or("")
+                )
+            })?;
 
             if !status.success() {
                 return Err(anyhow::anyhow!("compilation failed ({})", status));
@@ -180,28 +202,79 @@ impl Compiler {
         Ok(out_bin)
     }
 
+    pub fn peek(
+        file: &Path,
+        out: Option<&Path>,
+        debug: bool,
+        include_dirs: &[PathBuf],
+        compiler_cmd: &str,
+        std_version: u32,
+    ) -> Result<PathBuf> {
+        if !file.is_file() {
+            anyhow::bail!(
+                "Invalid target: '{}' is a directory or does not exist.",
+                file.display()
+            );
+        }
+
+        let out_file = match out {
+            Some(p) => p.to_path_buf(),
+            None => {
+                let mut p = file.to_path_buf();
+                p.set_extension("s");
+                p
+            }
+        };
+
+        let mut cmd = Self::create_base_cmd(compiler_cmd, std_version, debug, include_dirs, true)?;
+
+        println!();
+
+        cmd.arg("-S");
+        cmd.arg(file);
+        cmd.arg("-o");
+        cmd.arg(&out_file);
+
+        let status = cmd.status().with_context(|| {
+            format!(
+                "Failed to invoke '{}'. Is it installed?",
+                compiler_cmd.split_whitespace().next().unwrap_or("")
+            )
+        })?;
+
+        if !status.success() {
+            return Err(anyhow::anyhow!("compilation failed ({})", status));
+        }
+        Ui::ok(format!("assembly written to {}", out_file.display()));
+
+        Ok(out_file)
+    }
+
     pub fn resolve_test_target(query: Option<&str>) -> Result<(PathBuf, String)> {
         let current_dir = std::env::current_dir()?;
         let mut candidates = Vec::new();
 
         let mut check_dir = |dir: &Path| {
             let argo_dir = dir.join(Self::CACHE_DIR);
-            if argo_dir.exists() && argo_dir.is_dir()
-                && let Ok(entries) = fs::read_dir(argo_dir) {
-                    for entry in entries.flatten() {
-                        let p = entry.path();
-                        if p.extension().is_some_and(|ext| ext == "out")
-                            && let Ok(meta) = entry.metadata()
-                                && let Ok(mtime) = meta.modified() {
-                                    let stem = p
-                                        .file_stem()
-                                        .unwrap_or_default()
-                                        .to_string_lossy()
-                                        .to_string();
-                                    candidates.push((mtime, p, stem));
-                                }
+            if argo_dir.exists()
+                && argo_dir.is_dir()
+                && let Ok(entries) = fs::read_dir(argo_dir)
+            {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if p.extension().is_some_and(|ext| ext == "out")
+                        && let Ok(meta) = entry.metadata()
+                        && let Ok(mtime) = meta.modified()
+                    {
+                        let stem = p
+                            .file_stem()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string();
+                        candidates.push((mtime, p, stem));
                     }
                 }
+            }
         };
 
         check_dir(&current_dir);
