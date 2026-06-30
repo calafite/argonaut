@@ -41,17 +41,6 @@ pub fn get_include_dirs(cli_includes: &[String], config: &Config, file: &Path) -
         dirs.push(cwd);
     }
 
-    #[cfg(unix)]
-    {
-        let system_dirs: &[&str] = &["/usr/local/include", "/usr/include"];
-        for dir in system_dirs {
-            let path = PathBuf::from(dir);
-            if path.exists() {
-                dirs.push(path);
-            }
-        }
-    }
-
     let mut resolved = Vec::new();
     for d in dirs {
         let canon = d.canonicalize().unwrap_or(d);
