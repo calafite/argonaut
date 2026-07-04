@@ -13,6 +13,7 @@ struct CodeBlock {
     defined_symbols: Vec<String>,
     referenced_symbols: HashSet<String>,
     always_keep: bool,
+    is_macro_def: bool,
     namespaces: Vec<String>,
 }
 
@@ -73,7 +74,21 @@ impl TreeSitterShaker {
                 continue;
             }
 
-            let block_text = child.utf8_text(source).unwrap_or("").trim();
+            let mut end_byte = child.end_byte();
+
+            let mut next_node = child.next_sibling();
+            while let Some(n) = next_node {
+                if !n.is_named() && n.kind() == ";" {
+                    end_byte = n.end_byte();
+                    next_node = n.next_sibling();
+                } else {
+                    break;
+                }
+            }
+
+            let block_text = std::str::from_utf8(&source[child.start_byte()..end_byte])
+                .unwrap_or("")
+                .trim();
 
             if block_text.starts_with("#pragma once") {
                 continue;
@@ -93,12 +108,10 @@ impl TreeSitterShaker {
                 continue;
             }
 
+            let is_macro_def = kind == "preproc_def" || kind == "preproc_function_def";
             let always_keep = kind.starts_with("preproc_") || kind == "using_declaration";
-            let defined_symbols = if always_keep {
-                Vec::new()
-            } else {
-                get_declared_symbols(child, source)
-            };
+
+            let defined_symbols = get_declared_symbols(child, source);
             let referenced_symbols = get_referenced_symbols(child, source);
 
             self.library_blocks.push(CodeBlock {
@@ -106,6 +119,7 @@ impl TreeSitterShaker {
                 defined_symbols,
                 referenced_symbols,
                 always_keep,
+                is_macro_def,
                 namespaces: current_ns.clone(),
             });
         }
@@ -181,6 +195,14 @@ impl BundleStrategy for TreeSitterShaker {
             .parse(&entry_bytes, None)
             .context("Failed to parse main entry file")?;
         let mut alive_symbols = get_referenced_symbols(main_tree.root_node(), &entry_bytes);
+
+        for block in &self.library_blocks {
+            if block.always_keep && !block.is_macro_def {
+                for r_sym in &block.referenced_symbols {
+                    alive_symbols.insert(r_sym.clone());
+                }
+            }
+        }
 
         let mut queue: VecDeque<String> = alive_symbols.iter().cloned().collect();
         while let Some(sym) = queue.pop_front() {
@@ -259,6 +281,13 @@ impl BundleStrategy for TreeSitterShaker {
 fn get_declared_symbols(node: Node, source: &[u8]) -> Vec<String> {
     let mut symbols = Vec::new();
     match node.kind() {
+        "preproc_def" | "preproc_function_def" => {
+            if let Some(name_node) = node.child_by_field_name("name") {
+                if let Ok(sym) = name_node.utf8_text(source) {
+                    symbols.push(sym.to_string());
+                }
+            }
+        }
         "template_declaration" => {
             let mut cursor = node.walk();
             for child in node.children(&mut cursor) {
@@ -277,10 +306,10 @@ fn get_declared_symbols(node: Node, source: &[u8]) -> Vec<String> {
         }
         "class_specifier" | "struct_specifier" | "enum_specifier" | "union_specifier"
         | "alias_declaration" => {
-            if let Some(name_node) = node.child_by_field_name("name")
-                && let Ok(sym) = name_node.utf8_text(source)
-            {
-                symbols.push(sym.to_string());
+            if let Some(name_node) = node.child_by_field_name("name") {
+                if let Ok(sym) = name_node.utf8_text(source) {
+                    symbols.push(sym.to_string());
+                }
             }
         }
         "function_definition" | "declaration" | "type_definition" => {
@@ -324,13 +353,43 @@ fn get_referenced_symbols(node: Node, source: &[u8]) -> HashSet<String> {
         if curr.kind() == "comment" {
             continue;
         }
+
+        if curr.kind() == "preproc_arg" {
+            if let Ok(text) = curr.utf8_text(source) {
+                let mut current_word = String::new();
+                for c in text.chars() {
+                    if c.is_alphanumeric() || c == '_' {
+                        current_word.push(c);
+                    } else {
+                        if !current_word.is_empty() {
+                            if current_word.chars().next().unwrap().is_alphabetic()
+                                || current_word.starts_with('_')
+                            {
+                                refs.insert(current_word.clone());
+                            }
+                            current_word.clear();
+                        }
+                    }
+                }
+                if !current_word.is_empty() {
+                    if current_word.chars().next().unwrap().is_alphabetic()
+                        || current_word.starts_with('_')
+                    {
+                        refs.insert(current_word);
+                    }
+                }
+            }
+            continue;
+        }
+
         if curr.child_count() == 0 {
             if matches!(
                 curr.kind(),
                 "identifier" | "type_identifier" | "field_identifier" | "namespace_identifier"
-            ) && let Ok(text) = curr.utf8_text(source)
-            {
-                refs.insert(text.to_string());
+            ) {
+                if let Ok(text) = curr.utf8_text(source) {
+                    refs.insert(text.to_string());
+                }
             }
         } else {
             let mut cursor = curr.walk();
