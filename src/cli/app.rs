@@ -57,6 +57,7 @@ impl Cli {
                 file,
                 include_dirs,
                 std,
+                mode,
             } => {
                 let std_version = std.unwrap_or(config.build.std);
                 let dirs = get_include_dirs(&include_dirs, &config, &file);
@@ -66,6 +67,11 @@ impl Cli {
                 Ui::meta("compiler", &config.build.compiler);
                 Ui::meta("std", format!("C++{}", std_version));
 
+                let mode = match mode {
+                    Some(m) => m.to_lowercase(),
+                    None => String::new(),
+                };
+
                 Compiler::build(
                     &file,
                     false,
@@ -73,6 +79,7 @@ impl Cli {
                     &config.build.compiler,
                     std_version,
                     config.build.log_file,
+                    mode,
                 )?;
             }
             Commands::Debug {
@@ -95,6 +102,7 @@ impl Cli {
                     &config.build.compiler,
                     std_version,
                     config.build.log_file,
+                    "".to_string(),
                 )?;
             }
             Commands::Test {
@@ -145,6 +153,7 @@ impl Cli {
                 reduced,
                 include_dirs,
                 std,
+                mode,
             } => {
                 let std_version = std.unwrap_or(config.build.std);
                 let dirs = get_include_dirs(&include_dirs, &config, &file);
@@ -159,7 +168,20 @@ impl Cli {
                 Ui::meta("compiler", &compiler);
                 Ui::meta("std", format!("C++{}", std_version));
 
-                Compiler::peek(&file, out.as_deref(), debug, &dirs, &compiler, std_version)?;
+                let mode = match mode {
+                    Some(ms) => ms.to_lowercase(),
+                    None => String::new(),
+                };
+
+                Compiler::peek(
+                    &file,
+                    out.as_deref(),
+                    debug,
+                    &dirs,
+                    &compiler,
+                    std_version,
+                    mode,
+                )?;
             }
         }
 
@@ -176,6 +198,8 @@ pub enum Commands {
         include_dirs: Vec<String>,
         #[arg(short = 's', long = "std")]
         std: Option<u32>,
+        #[arg(short = 'm', long = "mode")]
+        mode: Option<String>,
     },
     /// Compile solution with debug symbols & sanitizers
     Debug {
@@ -224,5 +248,7 @@ pub enum Commands {
         include_dirs: Vec<String>,
         #[arg(short = 's', long = "std")]
         std: Option<u32>,
+        #[arg(short = 'm', long = "mode")]
+        mode: Option<String>,
     },
 }

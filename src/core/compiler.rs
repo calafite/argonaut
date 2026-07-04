@@ -57,13 +57,13 @@ impl Compiler {
         })
     }
 
-    /// Abstracts the process of generating standard compilation commands
     fn create_base_cmd(
         compiler_cmd: &str,
         std_version: u32,
         debug: bool,
         include_dirs: &[PathBuf],
         color_diagnostics: bool,
+        mode: String,
     ) -> Result<Command> {
         let mut parts = compiler_cmd.split_whitespace();
         let bin = parts
@@ -93,7 +93,13 @@ impl Compiler {
                 Ui::meta("sanitizers", "unavailable");
             }
         } else {
-            cmd.args(["-O2"]);
+            if mode == "o3" {
+                cmd.args(["-O3"]);
+                Ui::meta("mode", "O3");
+            } else {
+                cmd.args(["-O2"]);
+                Ui::meta("mode", "O2");
+            }
         }
 
         Ok(cmd)
@@ -106,6 +112,7 @@ impl Compiler {
         compiler_cmd: &str,
         std_version: u32,
         log_file: bool,
+        mode: String,
     ) -> Result<PathBuf> {
         if !file.is_file() {
             anyhow::bail!(
@@ -119,8 +126,14 @@ impl Compiler {
         let mut out_bin = cache_dir.join(file_stem);
         out_bin.set_extension("out");
 
-        let mut cmd =
-            Self::create_base_cmd(compiler_cmd, std_version, debug, include_dirs, !log_file)?;
+        let mut cmd = Self::create_base_cmd(
+            compiler_cmd,
+            std_version,
+            debug,
+            include_dirs,
+            !log_file,
+            mode.clone(),
+        )?;
 
         println!();
 
@@ -209,6 +222,7 @@ impl Compiler {
         include_dirs: &[PathBuf],
         compiler_cmd: &str,
         std_version: u32,
+        mode: String,
     ) -> Result<PathBuf> {
         if !file.is_file() {
             anyhow::bail!(
@@ -226,7 +240,8 @@ impl Compiler {
             }
         };
 
-        let mut cmd = Self::create_base_cmd(compiler_cmd, std_version, debug, include_dirs, true)?;
+        let mut cmd =
+            Self::create_base_cmd(compiler_cmd, std_version, debug, include_dirs, true, mode)?;
 
         println!();
 

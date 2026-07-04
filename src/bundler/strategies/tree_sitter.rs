@@ -13,6 +13,7 @@ struct CodeBlock {
     defined_symbols: Vec<String>,
     referenced_symbols: HashSet<String>,
     always_keep: bool,
+    namespaces: Vec<String>,
 }
 
 pub struct TreeSitterShaker {
@@ -36,6 +37,81 @@ impl TreeSitterShaker {
         }
     }
 
+    fn extract_blocks<'a>(
+        &mut self,
+        node: Node<'a>,
+        source: &[u8],
+        resolver: &Resolver,
+        canon: &Path,
+        parser: &mut Parser,
+        current_ns: &mut Vec<String>,
+    ) -> Result<()> {
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if !child.is_named() {
+                continue;
+            }
+
+            let kind = child.kind();
+
+            if kind == "comment" {
+                continue;
+            }
+
+            if kind == "namespace_definition" {
+                let name = if let Some(name_node) = child.child_by_field_name("name") {
+                    name_node.utf8_text(source).unwrap_or("").to_string()
+                } else {
+                    "".to_string()
+                };
+
+                if let Some(body) = child.child_by_field_name("body") {
+                    current_ns.push(name);
+                    self.extract_blocks(body, source, resolver, canon, parser, current_ns)?;
+                    current_ns.pop();
+                }
+                continue;
+            }
+
+            let block_text = child.utf8_text(source).unwrap_or("").trim();
+
+            if block_text.starts_with("#pragma once") {
+                continue;
+            }
+
+            if let Some(inc) = parse_include(block_text) {
+                if let Some(resolved) = resolver.resolve(&inc, canon) {
+                    self.collect_header(&resolved, resolver, parser)?;
+                } else {
+                    let formatted = if inc.is_quote {
+                        format!("\"{}\"", inc.path)
+                    } else {
+                        format!("<{}>", inc.path)
+                    };
+                    self.system_includes.insert(formatted);
+                }
+                continue;
+            }
+
+            let always_keep = kind.starts_with("preproc_") || kind == "using_declaration";
+            let defined_symbols = if always_keep {
+                Vec::new()
+            } else {
+                get_declared_symbols(child, source)
+            };
+            let referenced_symbols = get_referenced_symbols(child, source);
+
+            self.library_blocks.push(CodeBlock {
+                raw_text: block_text.to_string(),
+                defined_symbols,
+                referenced_symbols,
+                always_keep,
+                namespaces: current_ns.clone(),
+            });
+        }
+        Ok(())
+    }
+
     fn collect_header(
         &mut self,
         file: &Path,
@@ -54,51 +130,15 @@ impl TreeSitterShaker {
             .parse(&source_bytes, None)
             .context("Tree-sitter failed to build syntax tree")?;
 
-        let root = tree.root_node();
-        let mut cursor = root.walk();
-
-        for child in root.children(&mut cursor) {
-            let kind = child.kind();
-
-            if kind == "comment" {
-                continue;
-            }
-
-            let block_text = child.utf8_text(&source_bytes).unwrap_or("").trim();
-
-            if block_text.starts_with("#pragma once") {
-                continue;
-            }
-
-            if let Some(inc) = parse_include(block_text) {
-                if let Some(resolved) = resolver.resolve(&inc, &canon) {
-                    self.collect_header(&resolved, resolver, parser)?;
-                } else {
-                    let formatted = if inc.is_quote {
-                        format!("\"{}\"", inc.path)
-                    } else {
-                        format!("<{}>", inc.path)
-                    };
-                    self.system_includes.insert(formatted);
-                }
-                continue;
-            }
-
-            let always_keep = kind.starts_with("preproc_") || kind == "using_declaration";
-            let defined_symbols = if always_keep {
-                Vec::new()
-            } else {
-                get_declared_symbols(child, &source_bytes)
-            };
-            let referenced_symbols = get_referenced_symbols(child, &source_bytes);
-
-            self.library_blocks.push(CodeBlock {
-                raw_text: block_text.to_string(),
-                defined_symbols,
-                referenced_symbols,
-                always_keep,
-            });
-        }
+        let mut current_ns = Vec::new();
+        self.extract_blocks(
+            tree.root_node(),
+            &source_bytes,
+            resolver,
+            &canon,
+            parser,
+            &mut current_ns,
+        )?;
 
         Ok(())
     }
@@ -167,16 +207,49 @@ impl BundleStrategy for TreeSitterShaker {
         }
         out.push('\n');
 
+        let mut current_ns: Vec<String> = Vec::new();
+
         for block in &self.library_blocks {
             let is_alive = block.always_keep
                 || block
                     .defined_symbols
                     .iter()
                     .any(|s| alive_symbols.contains(s));
+
             if is_alive && !block.raw_text.is_empty() {
+                let target_ns = &block.namespaces;
+
+                let mut common_len = 0;
+                for (c, t) in current_ns.iter().zip(target_ns.iter()) {
+                    if c == t {
+                        common_len += 1;
+                    } else {
+                        break;
+                    }
+                }
+
+                while current_ns.len() > common_len {
+                    current_ns.pop();
+                    out.push_str("}\n");
+                }
+
+                for i in common_len..target_ns.len() {
+                    let ns = &target_ns[i];
+                    if ns.is_empty() {
+                        out.push_str("namespace {\n");
+                    } else {
+                        out.push_str(&format!("namespace {} {{\n", ns));
+                    }
+                    current_ns.push(ns.clone());
+                }
+
                 out.push_str(&block.raw_text);
                 out.push_str("\n\n");
             }
+        }
+
+        while current_ns.pop().is_some() {
+            out.push_str("}\n");
         }
 
         out.push_str(&main_body_lines.join("\n"));
@@ -205,10 +278,10 @@ fn get_declared_symbols(node: Node, source: &[u8]) -> Vec<String> {
         }
         "class_specifier" | "struct_specifier" | "enum_specifier" | "union_specifier"
         | "alias_declaration" => {
-            if let Some(name_node) = node.child_by_field_name("name")
-                && let Ok(sym) = name_node.utf8_text(source)
-            {
-                symbols.push(sym.to_string());
+            if let Some(name_node) = node.child_by_field_name("name") {
+                if let Ok(sym) = name_node.utf8_text(source) {
+                    symbols.push(sym.to_string());
+                }
             }
         }
         "function_definition" | "declaration" | "type_definition" => {
@@ -256,9 +329,10 @@ fn get_referenced_symbols(node: Node, source: &[u8]) -> HashSet<String> {
             if matches!(
                 curr.kind(),
                 "identifier" | "type_identifier" | "field_identifier" | "namespace_identifier"
-            ) && let Ok(text) = curr.utf8_text(source)
-            {
-                refs.insert(text.to_string());
+            ) {
+                if let Ok(text) = curr.utf8_text(source) {
+                    refs.insert(text.to_string());
+                }
             }
         } else {
             let mut cursor = curr.walk();
