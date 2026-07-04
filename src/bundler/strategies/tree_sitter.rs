@@ -282,11 +282,10 @@ fn get_declared_symbols(node: Node, source: &[u8]) -> Vec<String> {
     let mut symbols = Vec::new();
     match node.kind() {
         "preproc_def" | "preproc_function_def" => {
-            if let Some(name_node) = node.child_by_field_name("name") {
-                if let Ok(sym) = name_node.utf8_text(source) {
+            if let Some(name_node) = node.child_by_field_name("name")
+                && let Ok(sym) = name_node.utf8_text(source) {
                     symbols.push(sym.to_string());
                 }
-            }
         }
         "template_declaration" => {
             let mut cursor = node.walk();
@@ -306,11 +305,10 @@ fn get_declared_symbols(node: Node, source: &[u8]) -> Vec<String> {
         }
         "class_specifier" | "struct_specifier" | "enum_specifier" | "union_specifier"
         | "alias_declaration" => {
-            if let Some(name_node) = node.child_by_field_name("name") {
-                if let Ok(sym) = name_node.utf8_text(source) {
+            if let Some(name_node) = node.child_by_field_name("name")
+                && let Ok(sym) = name_node.utf8_text(source) {
                     symbols.push(sym.to_string());
                 }
-            }
         }
         "function_definition" | "declaration" | "type_definition" => {
             if let Some(type_node) = node.child_by_field_name("type") {
@@ -371,13 +369,12 @@ fn get_referenced_symbols(node: Node, source: &[u8]) -> HashSet<String> {
                         }
                     }
                 }
-                if !current_word.is_empty() {
-                    if current_word.chars().next().unwrap().is_alphabetic()
-                        || current_word.starts_with('_')
+                if !current_word.is_empty()
+                    && (current_word.chars().next().unwrap().is_alphabetic()
+                        || current_word.starts_with('_'))
                     {
                         refs.insert(current_word);
                     }
-                }
             }
             continue;
         }
@@ -386,11 +383,10 @@ fn get_referenced_symbols(node: Node, source: &[u8]) -> HashSet<String> {
             if matches!(
                 curr.kind(),
                 "identifier" | "type_identifier" | "field_identifier" | "namespace_identifier"
-            ) {
-                if let Ok(text) = curr.utf8_text(source) {
+            )
+                && let Ok(text) = curr.utf8_text(source) {
                     refs.insert(text.to_string());
                 }
-            }
         } else {
             let mut cursor = curr.walk();
             for child in curr.children(&mut cursor) {
