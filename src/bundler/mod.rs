@@ -1,4 +1,5 @@
 pub mod comment;
+pub mod minify;
 pub mod resolver;
 pub mod strategies;
 

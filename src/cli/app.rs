@@ -125,6 +125,7 @@ impl Cli {
                 file,
                 out,
                 include_dirs,
+                minify,
             } => {
                 let dirs = get_include_dirs(&include_dirs, &config, &file);
 
@@ -132,7 +133,22 @@ impl Cli {
                 Ui::meta("source", file.display());
 
                 let bundler = Bundler::new(dirs);
-                let bundled = bundler.bundle(&file)?;
+                let mut bundled = bundler.bundle(&file)?;
+
+                if minify {
+                    Ui::meta("minify", "enabled");
+                    let original_len = bundled.len();
+
+                    bundled = crate::bundler::minify::minify_bundle(&bundled);
+
+                    let new_len = bundled.len();
+                    Ui::info(format!(
+                        "Compressed from {} bytes to {} bytes ({:.1}% reduction)",
+                        original_len,
+                        new_len,
+                        100.0 - (new_len as f64 / original_len as f64) * 100.0
+                    ));
+                }
 
                 let out_path = out.unwrap_or_else(|| {
                     let stem = file.file_stem().unwrap_or_default().to_string_lossy();
@@ -228,6 +244,9 @@ pub enum Commands {
         /// Directories to compile against.
         #[arg(short = 'I', long = "include")]
         include_dirs: Vec<String>,
+        // Aggressively compact the code.
+        #[arg(short = 'M', long)]
+        minify: bool,
     },
     /// Format a C++ solution using a CP-optimized profile
     Format {
