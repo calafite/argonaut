@@ -233,8 +233,7 @@ impl BundleStrategy for TreeSitterShaker {
                     out.push_str("}\n");
                 }
 
-                for i in common_len..target_ns.len() {
-                    let ns = &target_ns[i];
+                for ns in target_ns.iter().skip(common_len) {
                     if ns.is_empty() {
                         out.push_str("namespace {\n");
                     } else {
@@ -278,10 +277,10 @@ fn get_declared_symbols(node: Node, source: &[u8]) -> Vec<String> {
         }
         "class_specifier" | "struct_specifier" | "enum_specifier" | "union_specifier"
         | "alias_declaration" => {
-            if let Some(name_node) = node.child_by_field_name("name") {
-                if let Ok(sym) = name_node.utf8_text(source) {
-                    symbols.push(sym.to_string());
-                }
+            if let Some(name_node) = node.child_by_field_name("name")
+                && let Ok(sym) = name_node.utf8_text(source)
+            {
+                symbols.push(sym.to_string());
             }
         }
         "function_definition" | "declaration" | "type_definition" => {
@@ -329,10 +328,9 @@ fn get_referenced_symbols(node: Node, source: &[u8]) -> HashSet<String> {
             if matches!(
                 curr.kind(),
                 "identifier" | "type_identifier" | "field_identifier" | "namespace_identifier"
-            ) {
-                if let Ok(text) = curr.utf8_text(source) {
-                    refs.insert(text.to_string());
-                }
+            ) && let Ok(text) = curr.utf8_text(source)
+            {
+                refs.insert(text.to_string());
             }
         } else {
             let mut cursor = curr.walk();
