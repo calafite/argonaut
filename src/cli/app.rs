@@ -4,9 +4,9 @@ use clap::{Parser, Subcommand, ValueHint};
 use std::path::PathBuf;
 
 use crate::bundler::Bundler;
-use crate::config::settings::Config;
+use crate::config::settings::Configuration;
 use crate::core::{compiler::Compiler, formatter::Formatter, runner::Runner, scaffold::Scaffold};
-use crate::utils::{paths::get_include_dirs, ui::Ui};
+use crate::utils::{paths::PathUtilities, ui::Ui};
 
 fn cli_styles() -> Styles {
     Styles::styled()
@@ -50,7 +50,7 @@ pub struct Cli {
 
 impl Cli {
     pub fn execute(self) -> Result<()> {
-        let config = Config::load()?;
+        let config = Configuration::load()?;
 
         match self.command {
             Commands::Build {

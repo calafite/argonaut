@@ -1,10 +1,13 @@
+use crate::utils::paths::PathUtilities;
 use anyhow::{Context, Result};
 use directories::ProjectDirs;
 use serde::Deserialize;
-use std::fs;
+use std::{fs, path::PathBuf};
+
+const CONFIG_FILE: &str = "Config.toml";
 
 #[derive(Deserialize, Default, Debug)]
-pub struct Config {
+pub struct Configuration {
     #[serde(default)]
     pub scaffold: ScaffoldConfig,
     #[serde(default)]
@@ -29,11 +32,15 @@ pub struct BuildConfig {
 }
 
 fn default_compiler() -> String {
-    "g++".to_string()
+    String::from("g++")
 }
 
 fn default_std() -> u32 {
-    20
+    20u32
+}
+
+fn config_path(project_dirs: ProjectDirs) -> PathBuf {
+    project_dirs.config_dir().join(CONFIG_FILE)
 }
 
 impl Default for BuildConfig {
@@ -47,24 +54,48 @@ impl Default for BuildConfig {
     }
 }
 
-impl Config {
+impl Configuration {
     pub fn load() -> Result<Self> {
-        let proj_dirs = ProjectDirs::from("", "", "argo")
-            .context("Could not determine user configuration directory")?;
+        let project_dirs = match PathUtilities::project_dirs() {
+            Some(directories) => directories,
+            None => {
+                let error = String::from("Could not resolve configuration directory");
+                return Err(anyhow::anyhow!(error));
+            }
+        };
 
-        let config_dir = proj_dirs.config_dir();
-        let config_file = config_dir.join("Config.toml");
+        let config_file = config_path(project_dirs);
 
         if !config_file.exists() {
-            return Ok(Self::default());
+            return Self::ok_default();
         }
 
-        let contents = fs::read_to_string(&config_file)
-            .with_context(|| format!("Failed to read config file at {}", config_file.display()))?;
+        let contents = match fs::read_to_string(&config_file) {
+            Ok(contents) => contents,
+            Err(error) => {
+                let error_string = format!(
+                    "Failed to read configuration file {}",
+                    config_file.display()
+                );
+                return Err(error).context(error_string);
+            }
+        };
 
-        let config: Config = toml::from_str(&contents)
-            .with_context(|| format!("Failed to parse config file at {}", config_file.display()))?;
+        let configuration: Configuration = match toml::from_str(&contents) {
+            Ok(configuration) => configuration,
+            Err(error) => {
+                let error_string = format!(
+                    "Failed to parse configuration file {}",
+                    config_file.display()
+                );
+                return Err(error).context(error_string);
+            }
+        };
 
-        Ok(config)
+        Ok(configuration)
+    }
+
+    fn ok_default() -> Result<Self> {
+        Ok(Self::default())
     }
 }
