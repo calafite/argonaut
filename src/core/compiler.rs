@@ -75,7 +75,7 @@ impl Compiler {
         debug: bool,
         include_dirs: &[PathBuf],
         color_diagnostics: bool,
-        mode: String,
+        mode: &'static str,
     ) -> Result<Command> {
         let mut command = Self::compiler_command(compiler_cmd)?;
         Self::common_flags(&mut command, std_version, color_diagnostics);
@@ -95,7 +95,7 @@ impl Compiler {
         compiler_cmd: &'static str,
         std_version: u32,
         log_file: bool,
-        mode: String,
+        mode: &'static str,
     ) -> Result<PathBuf> {
         Self::validate_target(file)?;
         let cache_directory = Self::setup_cache(file)?;
@@ -131,7 +131,7 @@ impl Compiler {
         include_dirs: &[PathBuf],
         compiler_cmd: &'static str,
         std_version: u32,
-        mode: String,
+        mode: &'static str,
     ) -> Result<PathBuf> {
         Self::validate_target(file)?;
 
