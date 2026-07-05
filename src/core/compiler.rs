@@ -1,31 +1,53 @@
 use crate::utils::ui::Ui;
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use colored::Colorize;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::process::Stdio;
 use std::sync::OnceLock;
 
 pub struct Compiler;
 
 static HAS_SANITIZERS: OnceLock<bool> = OnceLock::new();
 
+struct CompilerDiagnostics {
+    errors: usize,
+    warnings: usize,
+    first: Option<String>,
+}
+
 impl Compiler {
     const CACHE_DIR: &'static str = ".argo";
 
+    const WARNING_FLAGS: [&str; 4] = ["-Wall", "-Wextra", "-Wshadow", "-DLOCAL"];
+    const SANITIZER_FLAGS: [&str; 2] = ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"];
+    const SANITIZER_PROBE_FLAGS: [&str; 6] = [
+        "-fsanitize=address,undefined",
+        "-x",
+        "c++",
+        "-",
+        "-o",
+        "/dev/null",
+    ];
+    const DEBUG_FLAGS: [&str; 2] = ["-g", "-O1"];
+    const OPTIMISED_DEFAULT: &str = "O2";
+    const OPTIMISED_MAXIMUM: &str = "O3";
+
     fn setup_cache(file: &Path) -> Result<PathBuf> {
-        let parent = file.parent().unwrap_or_else(|| Path::new("."));
-        let dir = parent.join(Self::CACHE_DIR);
-        if !dir.exists() {
-            fs::create_dir_all(&dir).context("Failed to create .argo cache directory")?;
-            fs::write(dir.join(".gitignore"), "*\n")
-                .context("Failed to write .gitignore in cache")?;
+        let parent = Self::parent_or_default(file);
+        let directory = parent.join(Self::CACHE_DIR);
+        if !directory.exists() {
+            match Self::create_directory(&directory) {
+                Ok(()) => {}
+                Err(error) => return Err(error),
+            }
         }
-        Ok(dir)
+        Ok(directory)
     }
 
     pub fn binary_path(file: &Path) -> PathBuf {
-        let parent = file.parent().unwrap_or_else(|| Path::new("."));
+        let parent = Self::parent_or_default(file);
         let cache_dir = parent.join(Self::CACHE_DIR);
         let file_stem = file.file_stem().unwrap_or_default();
         let mut out_bin = cache_dir.join(file_stem);
@@ -33,186 +55,73 @@ impl Compiler {
         out_bin
     }
 
-    fn has_sanitizers(compiler_cmd: &str) -> bool {
-        *HAS_SANITIZERS.get_or_init(|| {
-            let mut parts = compiler_cmd.split_whitespace();
-            let bin = parts.next().unwrap_or("g++");
-
-            let mut cmd = Command::new(bin);
-            cmd.args(parts);
-            cmd.args([
-                "-fsanitize=address,undefined",
-                "-x",
-                "c++",
-                "-",
-                "-o",
-                "/dev/null",
-            ])
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
-        })
+    fn has_sanitizers(compiler_cmd: &'static str) -> bool {
+        let init = || {
+            let mut command = match Self::sanitizer_probe(compiler_cmd) {
+                Ok(command) => command,
+                Err(_) => return false,
+            };
+            match command.status() {
+                Ok(status) => status.success(),
+                Err(_) => false,
+            }
+        };
+        *HAS_SANITIZERS.get_or_init(init)
     }
 
     fn create_base_cmd(
-        compiler_cmd: &str,
+        compiler_cmd: &'static str,
         std_version: u32,
         debug: bool,
         include_dirs: &[PathBuf],
         color_diagnostics: bool,
         mode: String,
     ) -> Result<Command> {
-        let mut parts = compiler_cmd.split_whitespace();
-        let bin = parts
-            .next()
-            .ok_or_else(|| anyhow!("Compiler command cannot be empty"))?;
-
-        let mut cmd = Command::new(bin);
-        cmd.args(parts);
-
-        cmd.arg(format!("-std=c++{std_version}"));
-        cmd.args(["-Wall", "-Wextra", "-Wshadow", "-DLOCAL"]);
-
-        if color_diagnostics {
-            cmd.arg("-fdiagnostics-color=always");
-        }
-
-        for dir in include_dirs {
-            cmd.arg("-I").arg(dir);
-        }
-
+        let mut command = Self::compiler_command(compiler_cmd)?;
+        Self::common_flags(&mut command, std_version, color_diagnostics);
+        Self::include_dirs(&mut command, include_dirs);
         if debug {
-            cmd.args(["-g", "-O1"]);
-            if Self::has_sanitizers(compiler_cmd) {
-                cmd.args(["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]);
-                Ui::meta("sanitizers", "address, undefined");
-            } else {
-                Ui::meta("sanitizers", "unavailable");
-            }
+            Self::configure_debug(&mut command, compiler_cmd);
         } else {
-            if mode == "o3" {
-                cmd.args(["-O3"]);
-                Ui::meta("mode", "O3");
-            } else {
-                cmd.args(["-O2"]);
-                Ui::meta("mode", "O2");
-            }
+            Self::configure_release(&mut command, &mode);
         }
-
-        Ok(cmd)
+        Ok(command)
     }
 
     pub fn build(
         file: &Path,
         debug: bool,
         include_dirs: &[PathBuf],
-        compiler_cmd: &str,
+        compiler_cmd: &'static str,
         std_version: u32,
         log_file: bool,
         mode: String,
     ) -> Result<PathBuf> {
-        if !file.is_file() {
-            anyhow::bail!(
-                "Invalid target: '{}' is a directory or does not exist.",
-                file.display()
-            );
-        }
+        Self::validate_target(file)?;
+        let cache_directory = Self::setup_cache(file)?;
+        let out_binary = Self::binary_path(file);
 
-        let cache_dir = Self::setup_cache(file)?;
-        let file_stem = file.file_stem().unwrap_or_default();
-        let mut out_bin = cache_dir.join(file_stem);
-        out_bin.set_extension("out");
-
-        let mut cmd = Self::create_base_cmd(
+        let mut command = Self::create_base_cmd(
             compiler_cmd,
             std_version,
             debug,
             include_dirs,
             !log_file,
-            mode.clone(),
+            mode,
         )?;
 
         println!();
-
-        cmd.arg(file);
-        cmd.arg("-o");
-        cmd.arg(&out_bin);
+        command.arg(file).arg("-o").arg(&out_binary);
 
         if log_file {
-            let output = cmd.output().with_context(|| {
-                format!(
-                    "Failed to invoke '{}'. Is it installed?",
-                    compiler_cmd.split_whitespace().next().unwrap_or("")
-                )
-            })?;
-
-            let mut error_file = cache_dir.join(file_stem);
+            let target = file.file_stem().unwrap_or_default();
+            let mut error_file = cache_directory.join(target);
             error_file.set_extension("errors");
-
-            let stderr_str = String::from_utf8_lossy(&output.stderr);
-            let mut combined_out = Vec::new();
-            combined_out.extend_from_slice(&output.stdout);
-            combined_out.extend_from_slice(&output.stderr);
-            fs::write(&error_file, combined_out).context("Failed to write error log file")?;
-
-            let mut error_count = 0;
-            let mut warning_count = 0;
-            let mut first_error = None;
-
-            for line in stderr_str.lines() {
-                let lower = line.to_lowercase();
-                if lower.contains("error:") || lower.contains("fatal error:") {
-                    error_count += 1;
-                    if first_error.is_none() {
-                        first_error = Some(line.trim().to_string());
-                    }
-                } else if lower.contains("warning:") {
-                    warning_count += 1;
-                }
-            }
-
-            if !output.status.success() {
-                let mut err_str = format!(
-                    "compilation failed: {} errors, {} warnings",
-                    error_count, warning_count
-                );
-                if let Some(err_msg) = first_error {
-                    err_str.push_str(&format!("\n  {}  {}", "↳".dimmed(), err_msg.trim().red()));
-                }
-                err_str.push_str(&format!(
-                    "\n  {}  {}",
-                    "".cyan(),
-                    format!("full log saved to {}", error_file.display()).dimmed()
-                ));
-
-                return Err(anyhow::anyhow!(err_str));
-            } else if warning_count > 0 {
-                Ui::warn(format!(
-                    "compiled successfully with {} warnings",
-                    warning_count
-                ));
-                Ui::info(format!("details saved to {}", error_file.display()));
-            } else {
-                Ui::ok("compiled successfully");
-            }
+            Self::logged_execution(&mut command, compiler_cmd, &error_file)?;
         } else {
-            let status = cmd.status().with_context(|| {
-                format!(
-                    "Failed to invoke '{}'. Is it installed?",
-                    compiler_cmd.split_whitespace().next().unwrap_or("")
-                )
-            })?;
-
-            if !status.success() {
-                return Err(anyhow::anyhow!("compilation failed ({})", status));
-            }
-            Ui::ok("compiled successfully");
+            Self::standard_execution(&mut command, compiler_cmd)?;
         }
-
-        Ok(out_bin)
+        Ok(out_binary)
     }
 
     pub fn peek(
@@ -220,148 +129,388 @@ impl Compiler {
         out: Option<&Path>,
         debug: bool,
         include_dirs: &[PathBuf],
-        compiler_cmd: &str,
+        compiler_cmd: &'static str,
         std_version: u32,
         mode: String,
     ) -> Result<PathBuf> {
-        if !file.is_file() {
-            anyhow::bail!(
-                "Invalid target: '{}' is a directory or does not exist.",
-                file.display()
-            );
-        }
+        Self::validate_target(file)?;
 
-        let out_file = match out {
-            Some(p) => p.to_path_buf(),
-            None => {
-                let mut p = file.to_path_buf();
-                p.set_extension("s");
-                p
-            }
+        let output_file = match out {
+            Some(path) => path.to_path_buf(),
+            None => file.with_extension("s"),
         };
 
-        let mut cmd =
-            Self::create_base_cmd(compiler_cmd, std_version, debug, include_dirs, true, mode)?;
+        let mut command = Self::create_base_cmd(
+            compiler_cmd,
+            std_version,
+            debug,
+            include_dirs,
+            true, //
+            mode,
+        )?;
 
         println!();
+        command.arg("-S").arg(file).arg("-o").arg(&output_file);
 
-        cmd.arg("-S");
-        cmd.arg(file);
-        cmd.arg("-o");
-        cmd.arg(&out_file);
-
-        let status = cmd.status().with_context(|| {
-            format!(
-                "Failed to invoke '{}'. Is it installed?",
-                compiler_cmd.split_whitespace().next().unwrap_or("")
-            )
-        })?;
-
-        if !status.success() {
-            return Err(anyhow::anyhow!("compilation failed ({})", status));
-        }
-        Ui::ok(format!("assembly written to {}", out_file.display()));
-
-        Ok(out_file)
+        Self::execute_command(&mut command, compiler_cmd)?;
+        Ui::ok(format!(
+            "assembly output written to {}",
+            output_file.display()
+        ));
+        Ok(output_file)
     }
 
     pub fn resolve_test_target(query: Option<&str>) -> Result<(PathBuf, String)> {
-        let current_dir = std::env::current_dir()?;
-        let mut candidates = Vec::new();
-
-        let mut check_dir = |dir: &Path| {
-            let argo_dir = dir.join(Self::CACHE_DIR);
-            if argo_dir.exists()
-                && argo_dir.is_dir()
-                && let Ok(entries) = fs::read_dir(argo_dir)
-            {
-                for entry in entries.flatten() {
-                    let p = entry.path();
-                    if p.extension().is_some_and(|ext| ext == "out")
-                        && let Ok(meta) = entry.metadata()
-                        && let Ok(mtime) = meta.modified()
-                    {
-                        let stem = p
-                            .file_stem()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .to_string();
-                        candidates.push((mtime, p, stem));
-                    }
-                }
-            }
-        };
-
-        check_dir(&current_dir);
-        if let Ok(entries) = fs::read_dir(&current_dir) {
-            for entry in entries.flatten() {
-                if entry.path().is_dir() && entry.file_name() != Self::CACHE_DIR {
-                    check_dir(&entry.path());
-                }
-            }
-        }
+        let candidates = FuzzyMatching::find_candidates()?;
 
         if candidates.is_empty() {
-            anyhow::bail!("No compiled binaries found in local tree. Run `argo build` first.");
+            anyhow::bail!("No compiled binaries found in local tree. Run 'argo build' first.");
         }
 
         let query_str = match query {
-            Some(q) if !q.trim().is_empty() => q.trim(),
+            Some(query) if !query.trim().is_empty() => query.trim(),
             _ => {
                 let best = candidates
                     .into_iter()
-                    .max_by_key(|(mtime, _, _)| *mtime)
+                    .max_by_key(|candidate| candidate.mtime)
                     .unwrap();
-                return Ok((best.1, format!("{}.cpp (auto-selected newest)", best.2)));
+                return Ok((
+                    best.path,
+                    format!("{}.cpp (auto-selected newest)", best.stem),
+                ));
             }
         };
 
         let as_path = Path::new(query_str);
         if as_path.exists() {
-            let bin = Self::binary_path(as_path);
-            if bin.exists() {
-                return Ok((bin, query_str.to_string()));
+            let binary = Self::binary_path(as_path);
+            if binary.exists() {
+                return Ok((binary, query_str.to_string()));
             }
         }
 
         let clean_stem = query_str.strip_suffix(".cpp").unwrap_or(query_str);
+        if let Some(matched) = candidates
+            .iter()
+            .find(|candidate| candidate.stem == clean_stem)
+        {
+            return Ok((matched.path.clone(), format!("{}.cpp", matched.stem)));
+        }
 
-        for (_, p, stem) in &candidates {
-            if stem == clean_stem {
-                return Ok((p.clone(), format!("{}.cpp", stem)));
+        FuzzyMatching::fuzzy_match(clean_stem, candidates)
+    }
+
+    fn create_directory(directory: &PathBuf) -> Result<()> {
+        let create_result = fs::create_dir_all(directory);
+        if create_result.is_err() {
+            let error_str = String::from("Failed to create .argo cache directory");
+            return Err(anyhow::anyhow!(error_str));
+        }
+
+        let gitignore = directory.join(".gitignore");
+        let write_result = fs::write(gitignore, "*\n");
+        if write_result.is_err() {
+            let error_str = String::from("Failed to write .gitignore in cache.");
+            return Err(anyhow::anyhow!(error_str));
+        }
+
+        Ok(())
+    }
+
+    fn parent_or_default(file: &Path) -> &Path {
+        match file.parent() {
+            Some(parent) => parent,
+            None => Path::new("."),
+        }
+    }
+
+    fn sanitizer_probe(compiler_cmd: &'static str) -> Result<Command> {
+        let mut command = Self::compiler_command(compiler_cmd)?;
+        command.args(Self::SANITIZER_PROBE_FLAGS);
+        command.stdin(Stdio::null());
+        command.stdout(Stdio::null());
+        command.stderr(Stdio::null());
+        Ok(command)
+    }
+
+    fn common_flags(command: &mut Command, std_version: u32, color_diagnostics: bool) {
+        command.arg(format!("-std=c++{}", std_version));
+        command.args(Self::WARNING_FLAGS);
+
+        if color_diagnostics {
+            command.arg("-fdiagnostics-color=always");
+        }
+    }
+
+    fn include_dirs(command: &mut Command, include_dirs: &[PathBuf]) {
+        for directory in include_dirs {
+            command.arg("-I").arg(directory);
+        }
+    }
+
+    fn configure_debug(command: &mut Command, compiler_cmd: &'static str) {
+        command.args(Self::DEBUG_FLAGS);
+
+        if Self::has_sanitizers(compiler_cmd) {
+            command.args(Self::SANITIZER_FLAGS);
+            Ui::meta("sanitizers", "address, undefined");
+        } else {
+            Ui::meta("sanitizers", "unavailable");
+        }
+    }
+
+    fn configure_release(command: &mut Command, mode: &str) {
+        match mode {
+            "o3" => {
+                command.arg(Self::OPTIMISED_MAXIMUM);
+                Ui::meta("mode", Self::OPTIMISED_MAXIMUM);
+            }
+            _ => {
+                command.arg(Self::OPTIMISED_DEFAULT);
+                Ui::meta("mode", Self::OPTIMISED_DEFAULT);
+            }
+        }
+    }
+
+    fn compiler_binary(compiler_cmd: &str) -> Result<&str> {
+        match compiler_cmd.split_whitespace().next() {
+            Some(command) => Ok(command),
+            None => {
+                let error_string = String::from("Compiler command cannot be empty");
+                return Err(anyhow::anyhow!(error_string));
+            }
+        }
+    }
+
+    fn compiler_command(compiler_cmd: &'static str) -> Result<Command> {
+        let compiler = Self::compiler_binary(compiler_cmd)?;
+        let mut command = Command::new(compiler);
+        let args = compiler_cmd.split_whitespace().skip(1);
+        command.args(args);
+        Ok(command)
+    }
+
+    fn logged_execution(
+        command: &mut Command,
+        compiler_cmd: &str,
+        error_file: &Path,
+    ) -> Result<()> {
+        let output = match command.output() {
+            Ok(output) => output,
+            Err(_) => {
+                let error_string = format!(
+                    "Failed to invoke '{}'. Is it installed?",
+                    Self::compiler_binary(compiler_cmd)?
+                );
+                return Err(anyhow::anyhow!(error_string));
+            }
+        };
+
+        let mut combined_output = Vec::new();
+        combined_output.extend_from_slice(&output.stdout);
+        combined_output.extend_from_slice(&output.stderr);
+        fs::write(error_file, combined_output).context("Failed to write error log file")?;
+
+        let stderr_str = String::from_utf8_lossy(&output.stderr);
+        let diagnostics = Self::parse_diagnostics(&stderr_str);
+
+        if !output.status.success() {
+            let mut err_str = format!(
+                "compilation failed: {} errors, {} warnings",
+                diagnostics.errors, diagnostics.warnings
+            );
+
+            if let Some(err_msg) = diagnostics.first {
+                let colorised_msg = err_msg.trim().red();
+                let dimmed_arrow = "↳".dimmed();
+                err_str.push_str(&format!("\n {} {}", dimmed_arrow, colorised_msg));
+            }
+
+            let full_log = format!("full log saved to {}", error_file.display()).dimmed();
+            err_str.push_str(&format!("\n {} {}", "".cyan(), full_log));
+
+            Err(anyhow::anyhow!(err_str))
+        } else if diagnostics.warnings > 0 {
+            Ui::warn(format!(
+                "compiled successfully with {} warnings",
+                diagnostics.warnings
+            ));
+            Ui::info(format!("details saved to {}", error_file.display()));
+            Ok(())
+        } else {
+            Ui::ok("compiled successfully");
+            Ok(())
+        }
+    }
+
+    fn standard_execution(command: &mut Command, compiler_cmd: &str) -> Result<()> {
+        Self::execute_command(command, compiler_cmd)?;
+        Ui::ok("compiled succesfully");
+        Ok(())
+    }
+
+    fn parse_diagnostics(stderr: &str) -> CompilerDiagnostics {
+        let mut errors: usize = 0;
+        let mut warnings: usize = 0;
+        let mut first = None;
+
+        for line in stderr.lines() {
+            let lowered = line.to_lowercase();
+            if lowered.contains("error:") || lowered.contains("fatal error:") {
+                errors += 1;
+                if first.is_none() {
+                    let line_string = line.trim().to_string();
+                    first = Some(line_string);
+                }
+            } else if lowered.contains("warning:") {
+                warnings += 1;
             }
         }
 
-        let mut scored: Vec<(f64, PathBuf, String)> = Vec::new();
-        let q_lower = clean_stem.to_lowercase();
+        CompilerDiagnostics {
+            errors,
+            warnings,
+            first,
+        }
+    }
 
-        for (_, p, stem) in candidates {
-            let score = strsim::jaro_winkler(&q_lower, &stem.to_lowercase());
-            if score >= 0.65 {
-                scored.push((score, p, stem));
+    fn validate_target(file: &Path) -> Result<()> {
+        if !file.is_file() {
+            anyhow::bail!(
+                "Invalid target: '{}' is a directory or does not exist",
+                file.display()
+            );
+        }
+        Ok(())
+    }
+
+    fn execute_command(command: &mut Command, compiler_cmd: &str) -> Result<()> {
+        let status = command.status().map_err(|_| {
+            let binary = Self::compiler_binary(compiler_cmd).unwrap_or_default();
+            anyhow::anyhow!("Failed to invoke '{binary}'. Is it installed?")
+        })?;
+
+        if !status.success() {
+            return Err(anyhow::anyhow!("compilation failed ({status})"));
+        }
+
+        Ok(())
+    }
+}
+
+struct MatchCandidate {
+    mtime: std::time::SystemTime,
+    path: PathBuf,
+    stem: String,
+}
+
+struct FuzzyMatching;
+
+impl FuzzyMatching {
+    const CACHE_DIR: &'static str = ".argo";
+    const JARO_WRINKLER_THRESHOLD: f64 = 0.65;
+    const UPPER_JARO_WRINKLER_THRESHOLD: f64 = 0.72;
+    const RUNNER_UP_DISAMBIGUATION: f64 = 0.05;
+
+    pub fn find_candidates() -> Result<Vec<MatchCandidate>> {
+        let current_directory = std::env::current_dir()?;
+        let mut candidates: Vec<MatchCandidate> = Vec::new();
+
+        let mut check_directory = |directory: &Path| {
+            let argo_directory = directory.join(Self::CACHE_DIR);
+            let condition = argo_directory.exists() && argo_directory.is_dir();
+            let entries = match fs::read_dir(argo_directory.clone()) {
+                Ok(entries) => entries,
+                Err(_) => {
+                    let error_string =
+                        format!("Could not read entries from {}", argo_directory.display());
+                    return Err(anyhow::anyhow!(error_string));
+                }
+            };
+
+            if condition {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().is_some_and(|ext| ext == "out")
+                        && let Ok(meta) = entry.metadata()
+                        && let Ok(mtime) = meta.modified()
+                    {
+                        let stem = path
+                            .file_stem()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string();
+                        candidates.push(MatchCandidate { mtime, path, stem });
+                    }
+                }
+            }
+            Ok(())
+        };
+
+        check_directory(&current_directory)?;
+        if let Ok(entries) = fs::read_dir(&current_directory) {
+            for entry in entries.flatten() {
+                if entry.path().is_dir() && entry.file_name() != Self::CACHE_DIR {
+                    check_directory(&entry.path())?;
+                }
+            }
+        };
+
+        Ok(candidates)
+    }
+
+    pub fn fuzzy_match(
+        query_stem: &str,
+        candidates: Vec<MatchCandidate>,
+    ) -> Result<(PathBuf, String)> {
+        let mut scored = Vec::new();
+        let query_lowered = query_stem.to_lowercase();
+
+        for candidate in candidates {
+            let score = strsim::jaro_winkler(&query_lowered, &candidate.stem.to_lowercase());
+            if score >= Self::JARO_WRINKLER_THRESHOLD {
+                scored.push((score, candidate));
             }
         }
 
-        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        let compare = |first: &(f64, MatchCandidate), second: &(f64, MatchCandidate)| {
+            second
+                .0
+                .partial_cmp(&first.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        };
+
+        scored.sort_by(compare);
 
         match scored.as_slice() {
-            [(best_score, bin, stem), ..] if *best_score >= 0.72 => {
-                if let Some((runner_up_score, _, runner_up_stem)) = scored.get(1)
-                    && (best_score - runner_up_score).abs() < 0.05
-                {
-                    anyhow::bail!(
-                        "Ambiguous target '{query_str}'. Did you mean '{stem}.cpp' ({:.0}%) or '{runner_up_stem}.cpp' ({:.0}%)?",
-                        best_score * 100.0,
-                        runner_up_score * 100.0
-                    );
+            [(best_score, best_candidate)] if *best_score >= 0.72 => {
+                let runner_up = scored.get(1);
+
+                if runner_up.is_some() {
+                    let runner_up = runner_up.unwrap();
+                    let within = (best_score - runner_up.0).abs() < Self::RUNNER_UP_DISAMBIGUATION;
+
+                    if within {
+                        anyhow::bail!(
+                            "Ambiguous target '{query_stem}'. Did you mean '{}.cpp' ({:.0}%) or '{}.cpp' ({:.0}%)?",
+                            best_candidate.stem,
+                            best_score * 100.0,
+                            runner_up.1.stem,
+                            runner_up.0 * 100.0,
+                        );
+                    }
                 }
 
                 Ok((
-                    bin.clone(),
-                    format!("{stem}.cpp (jaro-winkler {:.0}%)", best_score * 100.0),
+                    best_candidate.path.clone(),
+                    format!(
+                        "{}.cpp (jaro-winkler {:.0}%)",
+                        best_candidate.stem,
+                        best_score * 100.0
+                    ),
                 ))
             }
-            _ => anyhow::bail!("No compiled binary close to '{query_str}' found."),
+            _ => anyhow::bail!("No compiled binary close to '{query_stem}' found."),
         }
     }
 }
