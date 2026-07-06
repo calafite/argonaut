@@ -76,4 +76,11 @@ impl PathUtilities {
     pub fn project_dirs() -> Option<ProjectDirs> {
         ProjectDirs::from(Self::QUALIFIER, Self::ORGANIZATION, Self::APPLICATION)
     }
+
+    pub fn parent_or_default(file: &Path) -> &Path {
+        match file.parent() {
+            Some(parent) => parent,
+            None => Path::new("."),
+        }
+    }
 }

@@ -78,13 +78,13 @@ impl Formatter {
     }
 
     fn find_config(file: &Path) -> Option<PathBuf> {
-        let mut current = Some(Self::parent_or_default(file));
+        let mut current = Some(PathUtilities::parent_or_default(file));
         while let Some(directory) = current {
             let exists = directory.join(".clang-format").exists()
                 || directory.join("_clang-format").exists();
 
             if exists {
-                let path_buf = Self::parent_or_default(file).to_path_buf();
+                let path_buf = PathUtilities::parent_or_default(file).to_path_buf();
                 return Some(path_buf);
             }
             current = directory.parent();
@@ -120,13 +120,6 @@ impl Formatter {
         }
 
         Ok(config_directory)
-    }
-
-    fn parent_or_default(file: &Path) -> &Path {
-        match file.parent() {
-            Some(parent) => parent,
-            None => Path::new("."),
-        }
     }
 
     fn clang_format(
