@@ -33,6 +33,11 @@ impl Compiler {
     const DEBUG_FLAGS: [&str; 2] = ["-g", "-O1"];
     const OPTIMISED_DEFAULT: &str = "O2";
     const OPTIMISED_MAXIMUM: &str = "O3";
+    const CROSS_COMPILER_CANDIDATES: [&str; 3] = [
+        "riscv64-buildroot-linux-gnu-g++",
+        "riscv64-linux-gnu-g++",
+        "riscv64-unknown-linux-gnu-g++",
+    ];
 
     fn setup_cache(file: &Path) -> Result<PathBuf> {
         let parent = Self::parent_or_default(file);
@@ -53,6 +58,20 @@ impl Compiler {
         let mut out_bin = cache_dir.join(file_stem);
         out_bin.set_extension("out");
         out_bin
+    }
+
+    pub fn cross_compiler() -> String {
+        if let Ok(path) = std::env::var("PATH") {
+            for directory in std::env::split_paths(&path) {
+                for candidate in Self::CROSS_COMPILER_CANDIDATES {
+                    let target = directory.join(candidate);
+                    if target.exists() {
+                        return candidate.to_string();
+                    }
+                }
+            }
+        }
+        "riscv64-linux-gnu-g++".to_string()
     }
 
     fn has_sanitizers(compiler_cmd: &'static str) -> bool {

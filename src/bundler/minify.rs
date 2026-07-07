@@ -28,6 +28,13 @@ const RESERVED_KEYWORDS: [&str; 9] = [
 pub struct Minifier;
 
 impl Minifier {
+    pub fn minify(input: &str) -> String {
+        let tokens = Self::lex_cpp(input);
+        let (frequency, existing) = Self::analyse(&tokens);
+        let (dictionary, definitions) = Self::optimise(frequency, &existing);
+        Self::assemble(tokens, &dictionary, &definitions)
+    }
+
     fn analyse(tokens: &[Token]) -> (HashMap<String, usize>, HashSet<String>) {
         let mut frequency = HashMap::new();
         let mut existing = HashSet::new();
