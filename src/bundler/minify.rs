@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    cmp::Reverse,
+    collections::{HashMap, HashSet},
+};
 
 #[derive(Debug, Clone)]
 pub enum Token {
@@ -9,232 +12,326 @@ pub enum Token {
     Punct(String),
 }
 
-pub fn minify_bundle(bundle: &str) -> String {
-    let tokens = lex_cpp(bundle);
+const LINE_BREAK: char = '\n';
+const CARRIAGE_RETURN: char = '\r';
+const BACKSLASH: char = '\\';
+const UNDERSCORE: char = '_';
+const DOUBLE_UNDERSCORE: &str = "__";
+const SLASH: char = '/';
+const STAR: char = '*';
+const HASH: char = '#';
+const QUOTE: char = '"';
+const SINGLE_QUOTE: char = '\'';
 
-    let mut freq = HashMap::new();
-    let mut existing_words = HashSet::new();
+const RESERVED_KEYWORDS: [&str; 9] = [
+    "defined", //
+    "include", //
+    "pragma",  //
+    "define",  //
+    "undef",   //
+    "ifdef",   //
+    "ifndef",  //
+    "elif",    //
+    "endif",   //
+];
 
-    for t in &tokens {
-        if let Token::Word(w) = t {
-            existing_words.insert(w.clone());
-            if is_safe_to_macro(w) && w.len() >= 4 {
-                *freq.entry(w.clone()).or_insert(0) += 1;
-            }
-        }
-    }
+pub struct Minifier;
 
-    let mut ranked: Vec<_> = freq.into_iter().collect();
-    ranked.sort_by_key(|(w, c)| std::cmp::Reverse(w.len() * c));
-
-    let mut dictionary = HashMap::new();
-    let mut macro_defs = Vec::new();
-    let mut macro_counter = 0;
-
-    for (word, count) in ranked {
-        let mut macro_name = format!("Z{}", macro_counter);
-        while existing_words.contains(&macro_name) {
-            macro_counter += 1;
-            macro_name = format!("Z{}", macro_counter);
-        }
-
-        let m_len = macro_name.len();
-        let cost = 9 + m_len + word.len();
-        let old_size = word.len() * count;
-        let new_size = m_len * count;
-
-        let savings = old_size as isize - new_size as isize - cost as isize;
-
-        if savings > 10 {
-            dictionary.insert(word.clone(), macro_name.clone());
-            macro_defs.push(format!("#define {} {}", macro_name, word));
-            macro_counter += 1;
-        }
-    }
-
-    let mut out = String::new();
-    out.push_str("// Cursed Minification Level: Maximum\n");
-
-    for def in macro_defs {
-        out.push_str(&def);
-        out.push('\n');
-    }
-
-    let mut last_char_alnum = false;
-
-    for token in tokens {
-        match token {
-            Token::Preproc(p) => {
-                if !out.ends_with('\n') && !out.is_empty() {
-                    out.push('\n');
+impl Minifier {
+    fn analyse(tokens: &[Token]) -> (HashMap<String, usize>, HashSet<String>) {
+        let mut frequency = HashMap::new();
+        let mut existing = HashSet::new();
+        for token in tokens {
+            if let Token::Word(word) = token {
+                existing.insert(word.clone());
+                if Self::safe_macro(word) && word.len() >= 4 {
+                    *frequency.entry(word.clone()).or_insert(0) += 1;
                 }
-                out.push_str(&p);
-                if !p.ends_with('\n') {
-                    out.push('\n');
-                }
-                last_char_alnum = false;
-            }
-            Token::StringLiteral(s) | Token::CharLiteral(s) => {
-                out.push_str(&s);
-                last_char_alnum = false;
-            }
-            Token::Punct(p) => {
-                out.push_str(&p);
-                last_char_alnum = false;
-            }
-            Token::Word(w) => {
-                let mapped = dictionary.get(&w).unwrap_or(&w);
-                let starts_alnum = mapped
-                    .chars()
-                    .next()
-                    .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_');
-
-                if last_char_alnum && starts_alnum {
-                    out.push(' ');
-                }
-
-                out.push_str(mapped);
-                last_char_alnum = mapped
-                    .chars()
-                    .last()
-                    .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_');
             }
         }
+        (frequency, existing)
     }
 
-    out
-}
+    fn optimise(
+        frequency: HashMap<String, usize>,
+        existing: &HashSet<String>,
+    ) -> (HashMap<String, String>, Vec<String>) {
+        let mut ranked: Vec<_> = frequency.into_iter().collect();
+        ranked.sort_by_key(Self::rank_tokens);
 
-fn is_safe_to_macro(w: &str) -> bool {
-    let first = w.chars().next().unwrap();
-    if first.is_ascii_digit() || w.starts_with("__") {
-        return false;
+        let mut dictionary = HashMap::new();
+        let mut macro_definitions = Vec::new();
+        let mut macro_counter = 0;
+
+        for (word, count) in ranked {
+            let mut macro_name = format!("Z{}", macro_counter);
+            while existing.contains(&macro_name) {
+                macro_counter += 1;
+                macro_name = format!("Z{}", macro_counter);
+            }
+
+            let macro_len = macro_name.len();
+            let cost = 9 + macro_len + word.len();
+            let old_size = word.len() * count;
+            let new_size = macro_len * count;
+
+            let savings = old_size as isize - new_size as isize - cost as isize;
+
+            if savings > 10 {
+                dictionary.insert(word.clone(), macro_name.clone());
+                macro_definitions.push(format!("#define {} {}", macro_name, word));
+                macro_counter += 1;
+            }
+        }
+
+        (dictionary, macro_definitions)
     }
-    let reserved = [
-        "defined", "include", "pragma", "define", "undef", "ifdef", "ifndef", "elif", "endif",
-    ];
-    !reserved.contains(&w)
-}
 
-fn lex_cpp(input: &str) -> Vec<Token> {
-    let mut tokens = Vec::new();
-    let mut chars = input.chars().peekable();
-    let mut is_start_of_line = true;
+    fn assemble(
+        tokens: Vec<Token>,
+        dictionary: &HashMap<String, String>,
+        macro_defs: &[String],
+    ) -> String {
+        let mut output = String::new();
+        output.push_str("// COMPRESSED BY ARGONAUT");
 
-    while let Some(&c) = chars.peek() {
-        if c == '\n' {
-            is_start_of_line = true;
-            chars.next();
-            continue;
-        }
-        if c.is_whitespace() {
-            chars.next();
-            continue;
+        for definition in macro_defs {
+            output.push_str(definition);
+            output.push(LINE_BREAK);
         }
 
-        if c == '#' && is_start_of_line {
-            let mut preproc = String::new();
-            while let Some(pc) = chars.next() {
-                preproc.push(pc);
-                if pc == '\n' {
-                    break;
+        let mut last_alnum = false;
+
+        for token in tokens {
+            match token {
+                Token::Preproc(preprocessor_string) => {
+                    if !output.ends_with(LINE_BREAK) && !output.is_empty() {
+                        output.push(LINE_BREAK);
+                    }
+                    output.push_str(&preprocessor_string);
+                    if !preprocessor_string.ends_with(LINE_BREAK) {
+                        output.push(LINE_BREAK);
+                    }
+                    last_alnum = false;
                 }
-                if pc == '\\'
-                    && let Some(&nc) = chars.peek()
-                    && (nc == '\n' || nc == '\r')
-                {
-                    preproc.push(chars.next().unwrap());
-                    if preproc.ends_with('\r') && chars.peek() == Some(&'\n') {
-                        preproc.push(chars.next().unwrap());
+                Token::StringLiteral(str) | Token::CharLiteral(str) => {
+                    output.push_str(&str);
+                    last_alnum = false;
+                }
+                Token::Punct(punctuation) => {
+                    output.push_str(&punctuation);
+                    last_alnum = false;
+                }
+                Token::Word(word) => {
+                    let closure = |character: char| {
+                        character.is_ascii_alphanumeric() || character == UNDERSCORE
+                    };
+                    let mapped = dictionary.get(&word).unwrap_or(&word);
+                    let starts_alnum = mapped.chars().next().is_some_and(closure);
+
+                    if last_alnum && starts_alnum {
+                        output.push(' ');
+                    }
+
+                    output.push_str(mapped);
+                    last_alnum = mapped.chars().last().is_some_and(closure);
+                }
+            }
+        }
+        output
+    }
+
+    fn safe_macro(word: &str) -> bool {
+        let mut characters = word.chars();
+        let first = characters.next();
+        if first.is_none() {
+            return false;
+        }
+        let first = first.unwrap();
+        if first.is_ascii_digit() || word.starts_with(DOUBLE_UNDERSCORE) {
+            return false;
+        }
+        !RESERVED_KEYWORDS.contains(&word)
+    }
+
+    fn lex_cpp(input: &str) -> Vec<Token> {
+        let mut tokens = Vec::new();
+        let mut chars = input.chars().peekable();
+        let mut line_start = true;
+
+        while let Some(&character) = chars.peek() {
+            if character == LINE_BREAK {
+                line_start = true;
+                chars.next();
+                continue;
+            }
+
+            if character.is_whitespace() {
+                chars.next();
+                continue;
+            }
+
+            if character == HASH && line_start {
+                let macro_string = Self::consume_macro(&mut chars);
+                tokens.push(Token::Preproc(macro_string));
+                line_start = true;
+                continue;
+            }
+
+            line_start = false;
+
+            if character == SLASH {
+                chars.next();
+                if let Some(&nc) = chars.peek() {
+                    if nc == SLASH {
+                        chars.next();
+                        Self::skip_comment(&mut chars, &mut line_start);
+                        continue;
+                    } else if nc == STAR {
+                        chars.next();
+                        Self::skip_block(&mut chars);
+                        continue;
                     }
                 }
+                tokens.push(Token::Punct(String::from("/")));
+                continue;
             }
-            tokens.push(Token::Preproc(preproc));
-            is_start_of_line = true;
-            continue;
+
+            if character == QUOTE {
+                let string = Self::consume_literal(&mut chars, QUOTE);
+                tokens.push(Token::StringLiteral(string));
+                continue;
+            }
+
+            if character == SINGLE_QUOTE {
+                let string = Self::consume_literal(&mut chars, SINGLE_QUOTE);
+                tokens.push(Token::CharLiteral(string));
+                continue;
+            }
+
+            if character.is_alphanumeric() || character == UNDERSCORE {
+                let word = Self::consume_word(&mut chars);
+                tokens.push(Token::Word(word));
+                continue;
+            }
+
+            if let Some(unmatched) = chars.next() {
+                tokens.push(Token::Punct(unmatched.to_string()));
+            }
         }
 
-        is_start_of_line = false;
+        tokens
+    }
 
-        if c == '/' {
-            chars.next();
-            if let Some(&nc) = chars.peek() {
-                if nc == '/' {
-                    chars.next();
-                    for cc in chars.by_ref() {
-                        if cc == '\n' {
-                            is_start_of_line = true;
-                            break;
-                        }
-                    }
-                    continue;
-                } else if nc == '*' {
-                    chars.next();
-                    let mut last_was_star = false;
-                    for cc in chars.by_ref() {
-                        if last_was_star && cc == '/' {
-                            break;
-                        }
-                        last_was_star = cc == '*';
-                    }
-                    continue;
-                }
+    fn skip_comment(chars: &mut std::iter::Peekable<std::str::Chars>, line_start: &mut bool) {
+        for character in chars.by_ref() {
+            if character == '\n' {
+                *line_start = true;
+                break;
             }
-            tokens.push(Token::Punct("/".to_string()));
-            continue;
         }
+    }
 
-        if c == '"' {
-            let mut s = String::new();
-            s.push(chars.next().unwrap());
+    fn skip_block(chars: &mut std::iter::Peekable<std::str::Chars>) {
+        let mut was_star = false;
+        for character in chars.by_ref() {
+            if was_star && character == SLASH {
+                break;
+            }
+            was_star = character == STAR;
+        }
+    }
+
+    fn consume_macro(chars: &mut std::iter::Peekable<std::str::Chars>) -> String {
+        let mut preprocessor_string = String::new();
+
+        loop {
+            let next = chars.next();
+            let macro_character = match next {
+                Some(character) => character,
+                None => break,
+            };
+            preprocessor_string.push(macro_character);
+            if macro_character == LINE_BREAK {
+                break;
+            }
+            if macro_character != BACKSLASH {
+                continue;
+            }
+            let peeked = chars.peek();
+            let next_character = match peeked {
+                Some(character) => *character,
+                None => continue,
+            };
+            let lb = next_character == LINE_BREAK;
+            let cr = next_character == CARRIAGE_RETURN;
+            let continuation = lb || cr;
+            if !continuation {
+                continue;
+            }
+            let continued = match chars.next() {
+                Some(character) => character,
+                None => break,
+            };
+            preprocessor_string.push(continued);
+            let cr_end = preprocessor_string.ends_with(CARRIAGE_RETURN);
+            if !cr_end {
+                continue;
+            }
+            let next_lf = chars.peek() == Some(&LINE_BREAK);
+            if !next_lf {
+                continue;
+            }
+            let lf = match chars.next() {
+                Some(character) => character,
+                None => break,
+            };
+            preprocessor_string.push(lf);
+        }
+        preprocessor_string
+    }
+
+    fn consume_literal(
+        chars: &mut std::iter::Peekable<std::str::Chars>,
+        delimiter: char,
+    ) -> String {
+        let mut string = String::new();
+        let next_character = chars.next();
+        if next_character.is_some() {
+            let next_character = next_character.unwrap();
+            string.push(next_character);
             let mut escape = false;
-            for sc in chars.by_ref() {
-                s.push(sc);
+            for character in chars.by_ref() {
+                string.push(character);
                 if escape {
                     escape = false;
-                } else if sc == '\\' {
+                } else if character == BACKSLASH {
                     escape = true;
-                } else if sc == '"' {
+                } else if character == delimiter {
                     break;
                 }
             }
-            tokens.push(Token::StringLiteral(s));
-            continue;
         }
-
-        if c == '\'' {
-            let mut s = String::new();
-            s.push(chars.next().unwrap());
-            let mut escape = false;
-            for sc in chars.by_ref() {
-                s.push(sc);
-                if escape {
-                    escape = false;
-                } else if sc == '\\' {
-                    escape = true;
-                } else if sc == '\'' {
-                    break;
-                }
-            }
-            tokens.push(Token::CharLiteral(s));
-            continue;
-        }
-
-        if c.is_ascii_alphanumeric() || c == '_' {
-            let mut w = String::new();
-            while let Some(&wc) = chars.peek() {
-                if wc.is_ascii_alphanumeric() || wc == '_' {
-                    w.push(chars.next().unwrap());
-                } else {
-                    break;
-                }
-            }
-            tokens.push(Token::Word(w));
-            continue;
-        }
-
-        tokens.push(Token::Punct(chars.next().unwrap().to_string()));
+        string
     }
 
-    tokens
+    fn consume_word(chars: &mut std::iter::Peekable<std::str::Chars>) -> String {
+        let mut word = String::new();
+        while let Some(&word_character) = chars.peek() {
+            if word_character.is_alphanumeric() || word_character == UNDERSCORE {
+                let next_char = chars.next();
+                if next_char.is_some() {
+                    let next_char = next_char.unwrap();
+                    word.push(next_char);
+                }
+            } else {
+                break;
+            }
+        }
+        word
+    }
+
+    fn rank_tokens((word, count): &(String, usize)) -> Reverse<usize> {
+        Reverse(word.len() * *count)
+    }
 }
