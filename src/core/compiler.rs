@@ -102,7 +102,7 @@ impl Compiler {
         if debug {
             Self::configure_debug(&mut command, compiler_cmd);
         } else {
-            Self::configure_release(&mut command, &mode);
+            Self::configure_release(&mut command, mode);
         }
         Ok(command)
     }
@@ -296,7 +296,7 @@ impl Compiler {
             Some(command) => Ok(command),
             None => {
                 let error_string = String::from("Compiler command cannot be empty");
-                return Err(anyhow::anyhow!(error_string));
+                Err(anyhow::anyhow!(error_string))
             }
         }
     }
@@ -502,11 +502,12 @@ impl FuzzyMatching {
         scored.sort_by(compare);
 
         match scored.as_slice() {
-            [(best_score, best_candidate)] if *best_score >= 0.72 => {
+            [(best_score, best_candidate)]
+                if *best_score >= Self::UPPER_JARO_WRINKLER_THRESHOLD =>
+            {
                 let runner_up = scored.get(1);
 
-                if runner_up.is_some() {
-                    let runner_up = runner_up.unwrap();
+                if let Some(runner_up) = runner_up {
                     let within = (best_score - runner_up.0).abs() < Self::RUNNER_UP_DISAMBIGUATION;
 
                     if within {

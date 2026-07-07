@@ -16,16 +16,12 @@ impl Scaffold {
 
         let template_path = Self::get_template(config);
 
-        if template_path.is_some() {
-            let template_path = template_path.unwrap();
-            if template_path.exists() {
-                Self::from_template(&template_path, &target_file)?;
+        if let Some(path) = template_path {
+            if path.exists() {
+                Self::from_template(&path, &target_file)?;
                 return Ok(());
             } else {
-                Ui::warn(format!(
-                    "template not found at: {}",
-                    template_path.display()
-                ));
+                Ui::warn(format!("template not found at: {}", path.display()));
             }
         }
 

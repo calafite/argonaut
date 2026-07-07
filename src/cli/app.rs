@@ -167,6 +167,7 @@ impl Cli {
         Formatter::format(&file)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn handle_peek(
         file: PathBuf,
         out: Option<PathBuf>,
@@ -203,7 +204,7 @@ impl Cli {
             &directories,
             compiler_cmd,
             std_version,
-            &mode,
+            mode,
         )
         .map(|_| ())
     }

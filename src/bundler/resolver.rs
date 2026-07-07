@@ -17,8 +17,8 @@ impl Resolver {
 
     pub fn resolve(&self, include: &Include, current_file: &Path) -> Option<PathBuf> {
         let parent = current_file.parent();
-        if include.is_quote && parent.is_some() {
-            let parent = parent.unwrap();
+        let quote = include.is_quote;
+        if quote && let Some(parent) = parent {
             let local = parent.join(&include.path);
             if local.exists() {
                 return Some(Self::canonicalize(local));
@@ -52,8 +52,7 @@ fn strip_include(line: &str) -> Option<&str> {
 
 fn extract_include(target: &str) -> Option<Include> {
     let str_like = target.strip_prefix('"');
-    if str_like.is_some() {
-        let rest = str_like.unwrap();
+    if let Some(rest) = str_like {
         let end_index = rest.find('"')?;
         return Some(Include {
             path: rest[..end_index].to_string(),
@@ -62,8 +61,7 @@ fn extract_include(target: &str) -> Option<Include> {
     }
 
     let bracket_include = target.strip_prefix("<");
-    if bracket_include.is_some() {
-        let rest = bracket_include.unwrap();
+    if let Some(rest) = bracket_include {
         let end_index = rest.find('>')?;
         return Some(Include {
             path: rest[..end_index].to_string(),

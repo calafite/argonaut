@@ -54,7 +54,7 @@ fn register_rules(
             let closure = |error: libseccomp::error::SeccompError| {
                 format!("Failed to add rule for '{syscall}: {error}")
             };
-            filter.add_rule(action, syscall).map_err(closure);
+            filter.add_rule(action, syscall).map_err(closure)?;
         }
     }
     Ok(())

@@ -294,8 +294,7 @@ impl Minifier {
     ) -> String {
         let mut string = String::new();
         let next_character = chars.next();
-        if next_character.is_some() {
-            let next_character = next_character.unwrap();
+        if let Some(next_character) = next_character {
             string.push(next_character);
             let mut escape = false;
             for character in chars.by_ref() {
@@ -317,8 +316,7 @@ impl Minifier {
         while let Some(&word_character) = chars.peek() {
             if word_character.is_alphanumeric() || word_character == UNDERSCORE {
                 let next_char = chars.next();
-                if next_char.is_some() {
-                    let next_char = next_char.unwrap();
+                if let Some(next_char) = next_char {
                     word.push(next_char);
                 }
             } else {
