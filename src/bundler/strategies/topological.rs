@@ -27,7 +27,7 @@ impl TopologicalInliner {
         }
     }
 
-    fn dfs(&mut self, file: &Path, resolver: &Resolver, out: &mut String) -> Result<()> {
+    fn dfs(&mut self, file: &Path, resolver: &Resolver, output: &mut String) -> Result<()> {
         let canon = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
 
         if self.emitted.contains(&canon) {
@@ -46,34 +46,49 @@ impl TopologicalInliner {
         let cleaned_content = strip_comments(&raw_content);
 
         for (raw_line, clean_line) in raw_content.lines().zip(cleaned_content.lines()) {
-            let trimmed_clean = clean_line.trim();
-
-            if trimmed_clean.starts_with("#pragma once") {
-                continue;
-            }
-
-            if let Some(inc) = parse_include(trimmed_clean) {
-                if let Some(resolved_path) = resolver.resolve(&inc, &canon) {
-                    self.dfs(&resolved_path, resolver, out)?;
-                    continue;
-                } else {
-                    let formatted = if inc.is_quote {
-                        format!("\"{}\"", inc.path)
-                    } else {
-                        format!("<{}>", inc.path)
-                    };
-                    self.system_includes.insert(formatted);
-                    continue;
-                }
-            }
-
-            out.push_str(raw_line);
-            out.push('\n');
+            self.process_line(raw_line, clean_line, &canon, resolver, output)?;
         }
 
         self.call_stack.remove(&canon);
         self.emitted.insert(canon);
         Ok(())
+    }
+
+    fn process_line(
+        &mut self,
+        raw_line: &str,
+        clean_line: &str,
+        current_file: &Path,
+        resolver: &Resolver,
+        out: &mut String,
+    ) -> Result<()> {
+        let trimmed_clean = clean_line.trim();
+
+        if trimmed_clean.starts_with("#pragma once") {
+            return Ok(());
+        }
+
+        if let Some(inc) = parse_include(trimmed_clean) {
+            if let Some(resolved_path) = resolver.resolve(&inc, current_file) {
+                self.dfs(&resolved_path, resolver, out)?;
+            } else {
+                let formatted = Self::format_include(&inc.path, inc.is_quote);
+                self.system_includes.insert(formatted);
+            }
+            return Ok(());
+        }
+
+        out.push_str(raw_line);
+        out.push('\n');
+        Ok(())
+    }
+
+    fn format_include(path: &str, is_quote: bool) -> String {
+        if is_quote {
+            format!("\"{path}\"")
+        } else {
+            format!("<{path}>")
+        }
     }
 }
 
