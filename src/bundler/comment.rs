@@ -1,57 +1,64 @@
+use super::*;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum State {
+    Normal,
+    String(char),
+    SingleLineComment,
+    MultiLineComment,
+}
+
 pub fn strip_comments(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
+    let mut output = String::with_capacity(input.len());
     let mut chars = input.chars().peekable();
-    let mut in_string = false;
-    let mut string_char = '"';
-    let mut in_s_line = false;
-    let mut in_m_line = false;
+    let mut state = State::Normal;
 
-    while let Some(c) = chars.next() {
-        if in_s_line {
-            if c == '\n' {
-                in_s_line = false;
-                out.push('\n');
-            }
-            continue;
-        }
-        if in_m_line {
-            if c == '*' && chars.peek() == Some(&'/') {
-                chars.next();
-                in_m_line = false;
-            } else if c == '\n' {
-                out.push('\n');
-            }
-            continue;
-        }
-        if in_string {
-            out.push(c);
-            if c == '\\' {
-                if let Some(next) = chars.next() {
-                    out.push(next);
+    while let Some(character) = chars.next() {
+        match state {
+            State::SingleLineComment => {
+                if character == LINE_BREAK {
+                    state = State::Normal;
+                    output.push(LINE_BREAK);
                 }
-            } else if c == string_char {
-                in_string = false;
             }
-            continue;
-        }
-
-        if c == '"' || c == '\'' {
-            in_string = true;
-            string_char = c;
-            out.push(c);
-        } else if c == '/' {
-            if chars.peek() == Some(&'/') {
-                chars.next();
-                in_s_line = true;
-            } else if chars.peek() == Some(&'*') {
-                chars.next();
-                in_m_line = true;
-            } else {
-                out.push(c);
+            State::MultiLineComment => {
+                if character == STAR && chars.peek() == Some(&SLASH) {
+                    chars.next();
+                    state = State::Normal;
+                    output.push(' ');
+                } else if character == LINE_BREAK {
+                    output.push(LINE_BREAK);
+                }
             }
-        } else {
-            out.push(c);
+            State::String(quote) => {
+                output.push(character);
+                if character == BACKSLASH {
+                    if let Some(next) = chars.next() {
+                        output.push(next);
+                    }
+                } else if character == quote {
+                    state = State::Normal;
+                }
+            }
+            State::Normal => {
+                if character == QUOTE || character == SINGLE_QUOTE {
+                    state = State::String(character);
+                    output.push(character);
+                } else if character == SLASH {
+                    if chars.peek() == Some(&SLASH) {
+                        chars.next();
+                        state = State::SingleLineComment;
+                    } else if chars.peek() == Some(&STAR) {
+                        chars.next();
+                        state = State::MultiLineComment;
+                    } else {
+                        output.push(character);
+                    }
+                } else {
+                    output.push(character);
+                }
+            }
         }
     }
-    out
+    output
 }

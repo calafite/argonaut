@@ -1,3 +1,4 @@
+use super::*;
 use std::{
     cmp::Reverse,
     collections::{HashMap, HashSet},
@@ -11,17 +12,6 @@ pub enum Token {
     Word(String),
     Punct(String),
 }
-
-const LINE_BREAK: char = '\n';
-const CARRIAGE_RETURN: char = '\r';
-const BACKSLASH: char = '\\';
-const UNDERSCORE: char = '_';
-const DOUBLE_UNDERSCORE: &str = "__";
-const SLASH: char = '/';
-const STAR: char = '*';
-const HASH: char = '#';
-const QUOTE: char = '"';
-const SINGLE_QUOTE: char = '\'';
 
 const RESERVED_KEYWORDS: [&str; 9] = [
     "defined", //

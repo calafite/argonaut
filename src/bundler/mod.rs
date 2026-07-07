@@ -8,6 +8,17 @@ use resolver::Resolver;
 use std::path::{Path, PathBuf};
 use strategies::{BundleStrategy, tree_sitter::TreeSitterShaker};
 
+pub const LINE_BREAK: char = '\n';
+pub const CARRIAGE_RETURN: char = '\r';
+pub const BACKSLASH: char = '\\';
+pub const UNDERSCORE: char = '_';
+pub const DOUBLE_UNDERSCORE: &str = "__";
+pub const SLASH: char = '/';
+pub const STAR: char = '*';
+pub const HASH: char = '#';
+pub const QUOTE: char = '"';
+pub const SINGLE_QUOTE: char = '\'';
+
 pub struct Bundler {
     resolver: Resolver,
 }
