@@ -426,9 +426,10 @@ impl BundleUtilities {
             } else {
                 if !current_word.is_empty() {
                     if let Some(first_character) = current_word.chars().next()
-                        && (first_character.is_alphabetic() || first_character == UNDERSCORE) {
-                            refs.insert(current_word.clone());
-                        }
+                        && (first_character.is_alphabetic() || first_character == UNDERSCORE)
+                    {
+                        refs.insert(current_word.clone());
+                    }
                     current_word.clear();
                 }
             }
@@ -436,8 +437,9 @@ impl BundleUtilities {
 
         if !current_word.is_empty()
             && let Some(first_character) = current_word.chars().next()
-                && (first_character.is_alphabetic() || first_character == UNDERSCORE) {
-                    refs.insert(current_word);
-                }
+            && (first_character.is_alphabetic() || first_character == UNDERSCORE)
+        {
+            refs.insert(current_word);
+        }
     }
 }
