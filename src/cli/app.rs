@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::bundler::Bundler;
 use crate::config::settings::Configuration;
+use crate::core::compiler::BuildArguments;
 use crate::core::{compiler::Compiler, formatter::Formatter, runner::Runner, scaffold::Scaffold};
 use crate::utils::{paths::PathUtilities, ui::Ui};
 
@@ -70,19 +71,17 @@ impl Cli {
         let directories = PathUtilities::get_include_dirs(&include_dirs, config, &file);
         Self::print_metadata("Release Build", &file, &config.build.compiler, std_version);
         let mode = mode.unwrap_or_default().to_lowercase();
-        let mode: &'static str = Box::leak(mode.into_boxed_str());
-        let compiler_cmd: &'static str = Box::leak(config.build.compiler.clone().into_boxed_str());
 
-        Compiler::build(
-            &file,
-            false,
-            &directories,
-            compiler_cmd,
-            std_version,
-            config.build.log_file,
-            mode,
-        )
-        .map(|_| ())
+        let args = BuildArguments::new()
+            .file(&file)
+            .debug(false)
+            .includes(&directories)
+            .cmd(config.build.compiler.clone())
+            .std(std_version)
+            .log(config.build.log_file)
+            .mode(mode);
+
+        Compiler::build(args).map(|_| ())
     }
 
     fn handle_debug(
@@ -94,20 +93,19 @@ impl Cli {
         let std_version = std.unwrap_or(config.build.std);
         let directories = PathUtilities::get_include_dirs(&include_dirs, config, &file);
         static EMPTY: &str = "";
-        let compiler_cmd: &'static str = Box::leak(config.build.compiler.clone().into_boxed_str());
 
         Self::print_metadata("Debug Build", &file, &config.build.compiler, std_version);
 
-        Compiler::build(
-            &file,
-            true,
-            &directories,
-            compiler_cmd,
-            std_version,
-            config.build.log_file,
-            EMPTY,
-        )
-        .map(|_| ())
+        let args = BuildArguments::new()
+            .file(&file)
+            .debug(true)
+            .includes(&directories)
+            .cmd(config.build.compiler.clone())
+            .std(std_version)
+            .log(config.build.log_file)
+            .mode(EMPTY);
+
+        Compiler::build(args).map(|_| ())
     }
 
     fn handle_test(target: Option<String>, input: bool, no_input: bool) -> Result<()> {
@@ -189,24 +187,21 @@ impl Cli {
         } else {
             config.build.compiler.clone()
         };
-        let compiler_cmd: &'static str = Box::leak(compiler.clone().into_boxed_str());
 
         Ui::meta("compiler", &compiler);
         Ui::meta("std", format!("C++{}", std_version));
 
         let mode = mode.unwrap_or_default().to_lowercase();
-        let mode: &'static str = Box::leak(mode.into_boxed_str());
 
-        Compiler::peek(
-            &file,
-            out.as_deref(),
-            debug,
-            &directories,
-            compiler_cmd,
-            std_version,
-            mode,
-        )
-        .map(|_| ())
+        let args = BuildArguments::new()
+            .file(&file)
+            .debug(debug)
+            .includes(&directories)
+            .cmd(compiler.clone())
+            .std(std_version)
+            .mode(mode);
+
+        Compiler::peek(args, out.as_deref()).map(|_| ())
     }
 
     fn print_metadata(section: &str, file: &Path, compiler: &str, std_version: u32) {
