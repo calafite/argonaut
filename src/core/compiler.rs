@@ -27,6 +27,12 @@ pub struct BuildArguments {
     pub log_file: bool,
 }
 
+impl Default for BuildArguments {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BuildArguments {
     pub fn new() -> Self {
         Self {
