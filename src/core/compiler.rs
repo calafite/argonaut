@@ -17,6 +17,65 @@ struct CompilerDiagnostics {
     first: Option<String>,
 }
 
+pub struct BuildArguments {
+    pub file: PathBuf,
+    pub include_dirs: Vec<PathBuf>,
+    pub compiler_cmd: String,
+    pub mode: String,
+    pub debug: bool,
+    pub std_version: u32,
+    pub log_file: bool,
+}
+
+impl BuildArguments {
+    pub fn new() -> Self {
+        Self {
+            file: PathBuf::new(),
+            include_dirs: Vec::new(),
+            compiler_cmd: "".into(),
+            mode: "".into(),
+            debug: false,
+            std_version: 20,
+            log_file: false,
+        }
+    }
+
+    pub fn file(mut self, path: &Path) -> Self {
+        self.file = path.to_path_buf();
+        self
+    }
+
+    pub fn debug(mut self, debug: bool) -> Self {
+        self.debug = debug;
+        self
+    }
+
+    pub fn includes(mut self, paths: &[PathBuf]) -> Self {
+        self.include_dirs = paths.to_vec();
+        self
+    }
+
+    pub fn cmd(mut self, cmd: impl Into<String>) -> Self {
+        self.compiler_cmd = cmd.into();
+        self
+    }
+
+    pub fn std(mut self, version: u32) -> Self {
+        self.std_version = version;
+        self
+    }
+
+    pub fn log(mut self, value: bool) -> Self {
+        self.log_file = value;
+        self
+    }
+
+    pub fn mode(mut self, mode: impl Into<String>) -> Self {
+        self.mode = mode.into();
+        self
+    }
+}
+
 impl Compiler {
     const CACHE_DIR: &'static str = ".argo";
 
@@ -33,6 +92,7 @@ impl Compiler {
     const DEBUG_FLAGS: [&str; 2] = ["-g", "-O1"];
     const OPTIMISED_DEFAULT: &str = "-O2";
     const OPTIMISED_MAXIMUM: &str = "-O3";
+    const OPTIMISED_BREAKING: &str = "-Ofast";
     const CROSS_COMPILER_CANDIDATES: [&str; 3] = [
         "riscv64-buildroot-linux-gnu-g++",
         "riscv64-linux-gnu-g++",
@@ -74,7 +134,7 @@ impl Compiler {
         "riscv64-linux-gnu-g++".to_string()
     }
 
-    fn has_sanitizers(compiler_cmd: &'static str) -> bool {
+    fn has_sanitizers(compiler_cmd: &str) -> bool {
         let init = || {
             let mut command = match Self::sanitizer_probe(compiler_cmd) {
                 Ok(command) => command,
@@ -88,90 +148,57 @@ impl Compiler {
         *HAS_SANITIZERS.get_or_init(init)
     }
 
-    fn create_base_cmd(
-        compiler_cmd: &'static str,
-        std_version: u32,
-        debug: bool,
-        include_dirs: &[PathBuf],
-        color_diagnostics: bool,
-        mode: &'static str,
-    ) -> Result<Command> {
-        let mut command = Self::compiler_command(compiler_cmd)?;
-        Self::common_flags(&mut command, std_version, color_diagnostics);
-        Self::include_dirs(&mut command, include_dirs);
-        if debug {
-            Self::configure_debug(&mut command, compiler_cmd);
+    fn create_base_cmd(args: &BuildArguments, color_diagnostics: bool) -> Result<Command> {
+        let mut command = Self::compiler_command(&args.compiler_cmd)?;
+        Self::common_flags(&mut command, args.std_version, color_diagnostics);
+        Self::include_dirs(&mut command, &args.include_dirs);
+        if args.debug {
+            Self::configure_debug(&mut command, &args.compiler_cmd);
         } else {
-            Self::configure_release(&mut command, mode);
+            Self::configure_release(&mut command, &args.mode);
         }
         Ok(command)
     }
 
-    pub fn build(
-        file: &Path,
-        debug: bool,
-        include_dirs: &[PathBuf],
-        compiler_cmd: &'static str,
-        std_version: u32,
-        log_file: bool,
-        mode: &'static str,
-    ) -> Result<PathBuf> {
-        Self::validate_target(file)?;
-        let cache_directory = Self::setup_cache(file)?;
-        let out_binary = Self::binary_path(file);
+    pub fn build(args: BuildArguments) -> Result<PathBuf> {
+        Self::validate_target(&args.file)?;
+        let cache_directory = Self::setup_cache(&args.file)?;
+        let out_binary = Self::binary_path(&args.file);
 
-        let mut command = Self::create_base_cmd(
-            compiler_cmd,
-            std_version,
-            debug,
-            include_dirs,
-            !log_file,
-            mode,
-        )?;
+        let mut command = Self::create_base_cmd(&args, !args.log_file)?;
 
         println!();
-        command.arg(file).arg("-o").arg(&out_binary);
+        command.arg(&args.file).arg("-o").arg(&out_binary);
 
-        if log_file {
-            let target = file.file_stem().unwrap_or_default();
+        if args.log_file {
+            let target = args.file.file_stem().unwrap_or_default();
             let mut error_file = cache_directory.join(target);
             error_file.set_extension("errors");
-            Self::logged_execution(&mut command, compiler_cmd, &error_file)?;
+            Self::logged_execution(&mut command, &args.compiler_cmd, &error_file)?;
         } else {
-            Self::standard_execution(&mut command, compiler_cmd)?;
+            Self::standard_execution(&mut command, &args.compiler_cmd)?;
         }
         Ok(out_binary)
     }
 
-    pub fn peek(
-        file: &Path,
-        out: Option<&Path>,
-        debug: bool,
-        include_dirs: &[PathBuf],
-        compiler_cmd: &'static str,
-        std_version: u32,
-        mode: &'static str,
-    ) -> Result<PathBuf> {
-        Self::validate_target(file)?;
+    pub fn peek(args: BuildArguments, out: Option<&Path>) -> Result<PathBuf> {
+        Self::validate_target(&args.file)?;
 
         let output_file = match out {
             Some(path) => path.to_path_buf(),
-            None => file.with_extension("s"),
+            None => args.file.with_extension("s"),
         };
 
-        let mut command = Self::create_base_cmd(
-            compiler_cmd,
-            std_version,
-            debug,
-            include_dirs,
-            true, //
-            mode,
-        )?;
+        let mut command = Self::create_base_cmd(&args, true)?;
 
         println!();
-        command.arg("-S").arg(file).arg("-o").arg(&output_file);
+        command
+            .arg("-S")
+            .arg(&args.file)
+            .arg("-o")
+            .arg(&output_file);
 
-        Self::execute_command(&mut command, compiler_cmd)?;
+        Self::execute_command(&mut command, &args.compiler_cmd)?;
         Ui::ok(format!(
             "assembly output written to {}",
             output_file.display()
@@ -243,7 +270,7 @@ impl Compiler {
         }
     }
 
-    fn sanitizer_probe(compiler_cmd: &'static str) -> Result<Command> {
+    fn sanitizer_probe(compiler_cmd: &str) -> Result<Command> {
         let mut command = Self::compiler_command(compiler_cmd)?;
         command.args(Self::SANITIZER_PROBE_FLAGS);
         command.stdin(Stdio::null());
@@ -267,7 +294,7 @@ impl Compiler {
         }
     }
 
-    fn configure_debug(command: &mut Command, compiler_cmd: &'static str) {
+    fn configure_debug(command: &mut Command, compiler_cmd: &str) {
         command.args(Self::DEBUG_FLAGS);
 
         if Self::has_sanitizers(compiler_cmd) {
@@ -280,6 +307,10 @@ impl Compiler {
 
     fn configure_release(command: &mut Command, mode: &str) {
         match mode {
+            "ofast" => {
+                command.arg(Self::OPTIMISED_BREAKING);
+                Ui::meta("mode", Self::OPTIMISED_BREAKING);
+            }
             "o3" => {
                 command.arg(Self::OPTIMISED_MAXIMUM);
                 Ui::meta("mode", Self::OPTIMISED_MAXIMUM);
@@ -301,7 +332,7 @@ impl Compiler {
         }
     }
 
-    fn compiler_command(compiler_cmd: &'static str) -> Result<Command> {
+    fn compiler_command(compiler_cmd: &str) -> Result<Command> {
         let compiler = Self::compiler_binary(compiler_cmd)?;
         let mut command = Command::new(compiler);
         let args = compiler_cmd.split_whitespace().skip(1);
@@ -364,7 +395,7 @@ impl Compiler {
 
     fn standard_execution(command: &mut Command, compiler_cmd: &str) -> Result<()> {
         Self::execute_command(command, compiler_cmd)?;
-        Ui::ok("compiled succesfully");
+        Ui::ok("compiled successfully");
         Ok(())
     }
 
@@ -435,19 +466,15 @@ impl FuzzyMatching {
         let current_directory = std::env::current_dir()?;
         let mut candidates: Vec<MatchCandidate> = Vec::new();
 
-        let mut check_directory = |directory: &Path| {
+        let mut check_directory = |directory: &Path| -> Result<()> {
             let argo_directory = directory.join(Self::CACHE_DIR);
-            let condition = argo_directory.exists() && argo_directory.is_dir();
-            let entries = match fs::read_dir(argo_directory.clone()) {
-                Ok(entries) => entries,
-                Err(_) => {
+            if argo_directory.exists() && argo_directory.is_dir() {
+                let entries = fs::read_dir(&argo_directory).map_err(|_| {
                     let error_string =
                         format!("Could not read entries from {}", argo_directory.display());
-                    return Err(anyhow::anyhow!(error_string));
-                }
-            };
+                    anyhow::anyhow!(error_string)
+                })?;
 
-            if condition {
                 for entry in entries.flatten() {
                     let path = entry.path();
                     if path.extension().is_some_and(|ext| ext == "out")
