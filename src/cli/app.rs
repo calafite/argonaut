@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use crate::bundler::Bundler;
 use crate::config::settings::Configuration;
 use crate::core::{compiler::Compiler, formatter::Formatter, runner::Runner, scaffold::Scaffold};
-use crate::utils::ui::Ui;
+use crate::utils::{paths::PathUtilities, ui::Ui};
 
 #[derive(Parser)]
 #[command(name = "argo")]
@@ -67,7 +67,7 @@ impl Cli {
         config: &Configuration,
     ) -> Result<()> {
         let std_version = std.unwrap_or(config.build.std);
-        let directories = get_includes(&include_dirs, config, &file);
+        let directories = PathUtilities::get_include_dirs(&include_dirs, config, &file);
         Self::print_metadata("Release Build", &file, &config.build.compiler, std_version);
         let mode = mode.unwrap_or_default().to_lowercase();
         let mode: &'static str = Box::leak(mode.into_boxed_str());
@@ -92,7 +92,7 @@ impl Cli {
         config: &Configuration,
     ) -> Result<()> {
         let std_version = std.unwrap_or(config.build.std);
-        let directories = get_includes(&include_dirs, config, &file);
+        let directories = PathUtilities::get_include_dirs(&include_dirs, config, &file);
         static EMPTY: &str = "";
         let compiler_cmd: &'static str = Box::leak(config.build.compiler.clone().into_boxed_str());
 
@@ -131,7 +131,7 @@ impl Cli {
         minify: bool,
         config: &Configuration,
     ) -> Result<()> {
-        let directories = get_includes(&include_dirs, config, &file);
+        let directories = PathUtilities::get_include_dirs(&include_dirs, config, &file);
 
         Ui::section("Bundler");
         Ui::meta("source", file.display());
@@ -179,7 +179,7 @@ impl Cli {
         config: &Configuration,
     ) -> Result<()> {
         let std_version = std.unwrap_or(config.build.std);
-        let directories = get_includes(&include_dirs, config, &file);
+        let directories = PathUtilities::get_include_dirs(&include_dirs, config, &file);
 
         Ui::section("Assembly Peek");
         Ui::meta("source", file.display());
@@ -293,15 +293,4 @@ fn styles() -> Styles {
         .error(AnsiColor::Red.on_default() | Effects::BOLD)
         .valid(AnsiColor::Cyan.on_default() | Effects::BOLD)
         .invalid(AnsiColor::Yellow.on_default() | Effects::BOLD)
-}
-
-fn get_includes(include_dirs: &[String], config: &Configuration, file: &Path) -> Vec<PathBuf> {
-    let mut directories: Vec<PathBuf> = include_dirs.iter().map(PathBuf::from).collect();
-    for directory in &config.build.include_dirs {
-        directories.push(PathBuf::from(directory));
-    }
-    if let Some(parent) = file.parent() {
-        directories.push(parent.to_path_buf());
-    }
-    directories
 }

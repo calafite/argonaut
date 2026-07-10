@@ -31,8 +31,8 @@ impl Compiler {
         "/dev/null",
     ];
     const DEBUG_FLAGS: [&str; 2] = ["-g", "-O1"];
-    const OPTIMISED_DEFAULT: &str = "O2";
-    const OPTIMISED_MAXIMUM: &str = "O3";
+    const OPTIMISED_DEFAULT: &str = "-O2";
+    const OPTIMISED_MAXIMUM: &str = "-O3";
     const CROSS_COMPILER_CANDIDATES: [&str; 3] = [
         "riscv64-buildroot-linux-gnu-g++",
         "riscv64-linux-gnu-g++",

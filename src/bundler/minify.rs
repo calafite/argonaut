@@ -90,7 +90,7 @@ impl Minifier {
         macro_defs: &[String],
     ) -> String {
         let mut output = String::new();
-        output.push_str("// COMPRESSED BY ARGONAUT");
+        output.push_str("// COMPRESSED BY ARGONAUT\n");
 
         for definition in macro_defs {
             output.push_str(definition);
