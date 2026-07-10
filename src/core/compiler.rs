@@ -98,12 +98,57 @@ impl Compiler {
     const DEBUG_FLAGS: [&str; 2] = ["-g", "-O1"];
     const OPTIMISED_DEFAULT: &str = "-O2";
     const OPTIMISED_MAXIMUM: &str = "-O3";
-    const OPTIMISED_BREAKING: &str = "-Ofast";
+    const OPTIMISED_BREAKING: [&str; 2] = ["-O3", "-ffast-math"];
     const CROSS_COMPILER_CANDIDATES: [&str; 3] = [
         "riscv64-buildroot-linux-gnu-g++",
         "riscv64-linux-gnu-g++",
         "riscv64-unknown-linux-gnu-g++",
     ];
+
+    pub fn is_assembly(file: &Path) -> bool {
+        file.extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.to_lowercase())
+            .is_some_and(|ext| ext == "s" || ext == "asm")
+    }
+
+    pub fn target_architecture(compiler_cmd: &str) -> Result<String> {
+        let mut command = Self::compiler_command(compiler_cmd)?;
+        command.arg("-dumpmachine");
+
+        let output = command
+            .output()
+            .context("Failed to probe compiler architecture")?;
+
+        if !output.status.success() {
+            anyhow::bail!("Compiler failed to report target machine");
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let triple = stdout.trim();
+
+        if triple.is_empty() {
+            anyhow::bail!("Compiler returned empty target triple");
+        }
+
+        // Target triples follow the pattern `<arch>-<vendor>-<os>-<env>` (or subset)
+        // Taking the first segment robustly isolates the target architecture.
+        let arch = triple.split('-').next().unwrap_or(triple);
+        Ok(arch.to_string())
+    }
+
+    pub fn format_arch(arch: &str) -> String {
+        match arch.to_lowercase().as_str() {
+            "x86_64" | "amd64" => "x86_64".to_string(),
+            "i386" | "i486" | "i586" | "i686" | "x86" => "x86".to_string(),
+            "aarch64" | "arm64" => "AArch64".to_string(),
+            "arm" | "armv7" | "armv7l" | "armv7hl" => "ARM".to_string(),
+            "riscv64" => "RISC-V 64".to_string(),
+            "riscv32" => "RISC-V 32".to_string(),
+            "wasm32" => "WebAssembly".to_string(),
+            other => other.to_string(),
+        }
+    }
 
     fn setup_cache(file: &Path) -> Result<PathBuf> {
         let parent = Self::parent_or_default(file);
@@ -126,17 +171,28 @@ impl Compiler {
         out_bin
     }
 
-    pub fn cross_compiler() -> String {
+    pub fn cross_compiler(base_compiler: &str) -> String {
+        if base_compiler.contains("clang") {
+            return format!("{} --target=riscv64", base_compiler);
+        }
+
         if let Ok(path) = std::env::var("PATH") {
             for directory in std::env::split_paths(&path) {
-                for candidate in Self::CROSS_COMPILER_CANDIDATES {
-                    let target = directory.join(candidate);
-                    if target.exists() {
-                        return candidate.to_string();
+                if let Ok(entries) = fs::read_dir(directory) {
+                    for entry in entries.flatten() {
+                        let name = entry.file_name().to_string_lossy().to_string();
+
+                        let is_riscv = name.starts_with("riscv64-") || name.starts_with("riscv32-");
+                        let is_cpp = name.ends_with("-g++") || name.ends_with("-c++");
+
+                        if is_riscv && is_cpp {
+                            return name;
+                        }
                     }
                 }
             }
         }
+
         "riscv64-linux-gnu-g++".to_string()
     }
 
@@ -154,15 +210,24 @@ impl Compiler {
         *HAS_SANITIZERS.get_or_init(init)
     }
 
-    fn create_base_cmd(args: &BuildArguments, color_diagnostics: bool) -> Result<Command> {
+    fn create_base(args: &BuildArguments, color_diagnostics: bool) -> Result<Command> {
         let mut command = Self::compiler_command(&args.compiler_cmd)?;
-        Self::common_flags(&mut command, args.std_version, color_diagnostics);
+        let is_assembly = Self::is_assembly(&args.file);
+
+        Self::common_flags(
+            &mut command,
+            args.std_version,
+            color_diagnostics,
+            is_assembly,
+        );
         Self::include_dirs(&mut command, &args.include_dirs);
+
         if args.debug {
-            Self::configure_debug(&mut command, &args.compiler_cmd);
+            Self::configure_debug(&mut command, &args.compiler_cmd, is_assembly);
         } else {
             Self::configure_release(&mut command, &args.mode);
         }
+
         Ok(command)
     }
 
@@ -171,7 +236,7 @@ impl Compiler {
         let cache_directory = Self::setup_cache(&args.file)?;
         let out_binary = Self::binary_path(&args.file);
 
-        let mut command = Self::create_base_cmd(&args, !args.log_file)?;
+        let mut command = Self::create_base(&args, !args.log_file)?;
 
         println!();
         command.arg(&args.file).arg("-o").arg(&out_binary);
@@ -190,12 +255,16 @@ impl Compiler {
     pub fn peek(args: BuildArguments, out: Option<&Path>) -> Result<PathBuf> {
         Self::validate_target(&args.file)?;
 
+        if Self::is_assembly(&args.file) {
+            anyhow::bail!("Cannot peek assembly output of a pure assembly file.");
+        }
+
         let output_file = match out {
             Some(path) => path.to_path_buf(),
             None => args.file.with_extension("s"),
         };
 
-        let mut command = Self::create_base_cmd(&args, true)?;
+        let mut command = Self::create_base(&args, true)?;
 
         println!();
         command
@@ -226,10 +295,7 @@ impl Compiler {
                     .into_iter()
                     .max_by_key(|candidate| candidate.mtime)
                     .unwrap();
-                return Ok((
-                    best.path,
-                    format!("{}.cpp (auto-selected newest)", best.stem),
-                ));
+                return Ok((best.path, format!("{} (auto-selected newest)", best.stem)));
             }
         };
 
@@ -241,12 +307,18 @@ impl Compiler {
             }
         }
 
-        let clean_stem = query_str.strip_suffix(".cpp").unwrap_or(query_str);
-        if let Some(matched) = candidates
+        let clean_stem = query_str
+            .strip_suffix(".cpp")
+            .or_else(|| query_str.strip_suffix(".s"))
+            .or_else(|| query_str.strip_suffix(".asm"))
+            .unwrap_or(query_str);
+
+        let matches = candidates
             .iter()
-            .find(|candidate| candidate.stem == clean_stem)
-        {
-            return Ok((matched.path.clone(), format!("{}.cpp", matched.stem)));
+            .find(|candidate| candidate.stem == clean_stem);
+
+        if let Some(matched) = matches {
+            return Ok((matched.path.clone(), matched.stem.clone()));
         }
 
         FuzzyMatching::fuzzy_match(clean_stem, candidates)
@@ -285,9 +357,16 @@ impl Compiler {
         Ok(command)
     }
 
-    fn common_flags(command: &mut Command, std_version: u32, color_diagnostics: bool) {
-        command.arg(format!("-std=c++{}", std_version));
-        command.args(Self::WARNING_FLAGS);
+    fn common_flags(
+        command: &mut Command,
+        std_version: u32,
+        color_diagnostics: bool,
+        is_assembly: bool,
+    ) {
+        if !is_assembly {
+            command.arg(format!("-std=c++{}", std_version));
+            command.args(Self::WARNING_FLAGS);
+        }
 
         if color_diagnostics {
             command.arg("-fdiagnostics-color=always");
@@ -300,10 +379,12 @@ impl Compiler {
         }
     }
 
-    fn configure_debug(command: &mut Command, compiler_cmd: &str) {
+    fn configure_debug(command: &mut Command, compiler_cmd: &str, is_assembly: bool) {
         command.args(Self::DEBUG_FLAGS);
 
-        if Self::has_sanitizers(compiler_cmd) {
+        if is_assembly {
+            Ui::meta("sanitizers", "disabled (assembly)");
+        } else if Self::has_sanitizers(compiler_cmd) {
             command.args(Self::SANITIZER_FLAGS);
             Ui::meta("sanitizers", "address, undefined");
         } else {
@@ -314,8 +395,10 @@ impl Compiler {
     fn configure_release(command: &mut Command, mode: &str) {
         match mode {
             "ofast" => {
-                command.arg(Self::OPTIMISED_BREAKING);
-                Ui::meta("mode", Self::OPTIMISED_BREAKING);
+                for arg in Self::OPTIMISED_BREAKING {
+                    command.arg(arg);
+                }
+                Ui::meta("mode", Self::OPTIMISED_BREAKING.join(" "));
             }
             "o3" => {
                 command.arg(Self::OPTIMISED_MAXIMUM);
@@ -545,7 +628,7 @@ impl FuzzyMatching {
 
                     if within {
                         anyhow::bail!(
-                            "Ambiguous target '{query_stem}'. Did you mean '{}.cpp' ({:.0}%) or '{}.cpp' ({:.0}%)?",
+                            "Ambiguous target '{query_stem}'. Did you mean '{}' ({:.0}%) or '{}' ({:.0}%)?",
                             best_candidate.stem,
                             best_score * 100.0,
                             runner_up.1.stem,
@@ -557,7 +640,7 @@ impl FuzzyMatching {
                 Ok((
                     best_candidate.path.clone(),
                     format!(
-                        "{}.cpp (jaro-winkler {:.0}%)",
+                        "{} (jaro-winkler {:.0}%)",
                         best_candidate.stem,
                         best_score * 100.0
                     ),

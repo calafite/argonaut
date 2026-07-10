@@ -68,12 +68,14 @@ impl BuildArgs {
     pub fn execute(self, config: &Configuration) -> Result<()> {
         let std_version = self.std.unwrap_or(config.build.std);
         let directories = PathUtilities::get_include_dirs(&self.include_dirs, config, &self.file);
+
         print_metadata(
             "Release Build",
             &self.file,
             &config.build.compiler,
             std_version,
         );
+
         let mode = self.mode.unwrap_or_default().to_lowercase();
 
         let args = BuildArguments::new()
@@ -237,6 +239,10 @@ pub struct PeekArgs {
 
 impl PeekArgs {
     pub fn execute(self, config: &Configuration) -> Result<()> {
+        if Compiler::is_assembly(&self.file) {
+            anyhow::bail!("Cannot peek assembly output of a pure assembly file.");
+        }
+
         let std_version = self.std.unwrap_or(config.build.std);
         let directories = PathUtilities::get_include_dirs(&self.include_dirs, config, &self.file);
 
@@ -244,7 +250,7 @@ impl PeekArgs {
         Ui::meta("source", self.file.display());
 
         let compiler = if self.reduced {
-            Compiler::cross_compiler()
+            Compiler::cross_compiler(&config.build.compiler)
         } else {
             config.build.compiler.clone()
         };
@@ -270,7 +276,15 @@ fn print_metadata(section: &str, file: &Path, compiler: &str, std_version: u32) 
     Ui::section(section);
     Ui::meta("source", file.display());
     Ui::meta("compiler", compiler);
-    Ui::meta("std", format!("C++{}", std_version));
+
+    if Compiler::is_assembly(file) {
+        let arch = Compiler::target_architecture(compiler)
+            .map(|a| Compiler::format_arch(&a))
+            .unwrap_or_else(|_| "Unknown".to_string());
+        Ui::meta("type", format!("{} ASM", arch));
+    } else {
+        Ui::meta("std", format!("C++{}", std_version));
+    }
 }
 
 fn styles() -> Styles {
