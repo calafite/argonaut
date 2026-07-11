@@ -1,17 +1,16 @@
 use anyhow::Result;
 use clap::builder::styling::{AnsiColor, Effects, Styles};
 use clap::{Args, Parser, Subcommand, ValueHint};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::bundler::Bundler;
 use crate::config::settings::Configuration;
-use crate::core::compiler::{BuildArguments, Compiler};
+use crate::core::compiler::Compiler;
 use crate::core::formatter::Formatter;
-use crate::core::runner::Runner;
+use crate::core::profiler::Profiler;
 use crate::core::scaffold::Scaffold;
 use crate::core::tester::Tester;
 use crate::parser::server::ProblemListener;
-use crate::utils::{paths::PathUtilities, ui::Ui};
 
 #[derive(Parser)]
 #[command(name = "argo")]
@@ -36,6 +35,7 @@ impl Cli {
             Commands::Format(args) => args.execute(),
             Commands::Peek(args) => args.execute(&config),
             Commands::Listen(args) => args.execute(&config),
+            Commands::Profile(args) => args.execute(&config),
         }
     }
 }
@@ -58,6 +58,8 @@ pub enum Commands {
     Peek(PeekArgs),
     /// Listen for Competitive Companion problem payloads
     Listen(ListenArgs),
+    /// Attach performance profilers to evaluate execution bottlenecks
+    Profile(ProfileArgs),
 }
 
 #[derive(Args)]
@@ -73,28 +75,13 @@ pub struct BuildArgs {
 
 impl BuildArgs {
     pub fn execute(self, config: &Configuration) -> Result<()> {
-        let std_version = self.std.unwrap_or(config.build.std);
-        let directories = PathUtilities::get_include_dirs(&self.include_dirs, config, &self.file);
-
-        print_metadata(
-            "Release Build",
+        Compiler::execute_build(
             &self.file,
-            &config.build.compiler,
-            std_version,
-        );
-
-        let mode = self.mode.unwrap_or_default().to_lowercase();
-
-        let args = BuildArguments::new()
-            .file(&self.file)
-            .debug(false)
-            .includes(&directories)
-            .cmd(config.build.compiler.clone())
-            .std(std_version)
-            .log(config.build.log_file)
-            .mode(mode);
-
-        Compiler::build(args).map(|_| ())
+            &self.include_dirs,
+            self.std,
+            self.mode.as_deref(),
+            config,
+        )
     }
 }
 
@@ -109,27 +96,7 @@ pub struct DebugArgs {
 
 impl DebugArgs {
     pub fn execute(self, config: &Configuration) -> Result<()> {
-        let std_version = self.std.unwrap_or(config.build.std);
-        let directories = PathUtilities::get_include_dirs(&self.include_dirs, config, &self.file);
-        static EMPTY: &str = "";
-
-        print_metadata(
-            "Debug Build",
-            &self.file,
-            &config.build.compiler,
-            std_version,
-        );
-
-        let args = BuildArguments::new()
-            .file(&self.file)
-            .debug(true)
-            .includes(&directories)
-            .cmd(config.build.compiler.clone())
-            .std(std_version)
-            .log(config.build.log_file)
-            .mode(EMPTY);
-
-        Compiler::build(args).map(|_| ())
+        Compiler::execute_debug(&self.file, &self.include_dirs, self.std, config)
     }
 }
 
@@ -145,15 +112,7 @@ pub struct TestArgs {
 
 impl TestArgs {
     pub fn execute(self) -> Result<()> {
-        let (binary, display) = Compiler::resolve_test_target(self.target.as_deref())?;
-        Ui::section("Running Tests");
-        Ui::meta("target", display);
-        let tests_run = Tester::run_suite(&binary)?;
-        if tests_run > 0 {
-            return Ok(());
-        }
-        let use_file = Runner::resolve_input(&binary, self.input, self.no_input)?;
-        Runner::run(&binary, use_file)
+        Tester::execute_test(self.target.as_deref(), self.input, self.no_input)
     }
 }
 
@@ -164,8 +123,7 @@ pub struct NewArgs {
 
 impl NewArgs {
     pub fn execute(self, config: &Configuration) -> Result<()> {
-        Ui::section("Project Scaffold");
-        Scaffold::create(&self.name, config)
+        Scaffold::execute_new(&self.name, config)
     }
 }
 
@@ -184,35 +142,13 @@ pub struct BundleArgs {
 
 impl BundleArgs {
     pub fn execute(self, config: &Configuration) -> Result<()> {
-        let directories = PathUtilities::get_include_dirs(&self.include_dirs, config, &self.file);
-
-        Ui::section("Bundler");
-        Ui::meta("source", self.file.display());
-
-        let bundler = Bundler::new(directories);
-        let mut bundled = bundler.bundle(&self.file)?;
-
-        if self.minify {
-            Ui::meta("minify", "enabled");
-            let original_len = bundled.len();
-            bundled = crate::bundler::minify::Minifier::minify(&bundled);
-            let new_len = bundled.len();
-            Ui::info(format!(
-                "Compressed from {} bytes to {} bytes ({:.1}% reduction)",
-                original_len,
-                new_len,
-                100.0 - (new_len as f64 / original_len as f64) * 100.0
-            ));
-        }
-
-        let out_path = self.out.unwrap_or_else(|| {
-            let stem = self.file.file_stem().unwrap_or_default().to_string_lossy();
-            self.file.with_file_name(format!("{}_bundled.cpp", stem))
-        });
-
-        std::fs::write(&out_path, bundled)?;
-        Ui::ok(format!("bundled to {}", out_path.display()));
-        Ok(())
+        Bundler::execute_bundle(
+            &self.file,
+            self.out.as_deref(),
+            &self.include_dirs,
+            self.minify,
+            config,
+        )
     }
 }
 
@@ -224,8 +160,7 @@ pub struct FormatArgs {
 
 impl FormatArgs {
     pub fn execute(self) -> Result<()> {
-        Ui::section("Code Formatter");
-        Formatter::format(&self.file)
+        Formatter::execute_format(&self.file)
     }
 }
 
@@ -249,36 +184,16 @@ pub struct PeekArgs {
 
 impl PeekArgs {
     pub fn execute(self, config: &Configuration) -> Result<()> {
-        if Compiler::is_assembly(&self.file) {
-            anyhow::bail!("Cannot peek assembly output of a pure assembly file.");
-        }
-
-        let std_version = self.std.unwrap_or(config.build.std);
-        let directories = PathUtilities::get_include_dirs(&self.include_dirs, config, &self.file);
-
-        Ui::section("Assembly Peek");
-        Ui::meta("source", self.file.display());
-
-        let compiler = if self.reduced {
-            Compiler::cross_compiler(&config.build.compiler)
-        } else {
-            config.build.compiler.clone()
-        };
-
-        Ui::meta("compiler", &compiler);
-        Ui::meta("std", format!("C++{}", std_version));
-
-        let mode = self.mode.unwrap_or_default().to_lowercase();
-
-        let args = BuildArguments::new()
-            .file(&self.file)
-            .debug(self.debug)
-            .includes(&directories)
-            .cmd(compiler.clone())
-            .std(std_version)
-            .mode(mode);
-
-        Compiler::peek(args, self.out.as_deref()).map(|_| ())
+        Compiler::execute_peek(
+            &self.file,
+            self.out.as_deref(),
+            self.debug,
+            self.reduced,
+            &self.include_dirs,
+            self.std,
+            self.mode.as_deref(),
+            config,
+        )
     }
 }
 
@@ -294,24 +209,21 @@ pub struct ListenArgs {
 
 impl ListenArgs {
     pub fn execute(self, config: &Configuration) -> Result<()> {
-        Ui::section("Problem Parser Server");
-        let use_short = self.short || config.scaffold.short_name;
-        ProblemListener::start(self.port, use_short, config)
+        ProblemListener::execute_listen(self.port, self.short, config)
     }
 }
 
-fn print_metadata(section: &str, file: &Path, compiler: &str, std_version: u32) {
-    Ui::section(section);
-    Ui::meta("source", file.display());
-    Ui::meta("compiler", compiler);
+#[derive(Args)]
+pub struct ProfileArgs {
+    #[arg(value_hint = ValueHint::FilePath)]
+    pub target: Option<String>,
+    #[arg(short, long)]
+    pub input: Option<String>,
+}
 
-    if Compiler::is_assembly(file) {
-        let arch = Compiler::target_architecture(compiler)
-            .map(|a| Compiler::format_arch(&a))
-            .unwrap_or_else(|_| "Unknown".to_string());
-        Ui::meta("type", format!("{} ASM", arch));
-    } else {
-        Ui::meta("std", format!("C++{}", std_version));
+impl ProfileArgs {
+    pub fn execute(self, config: &Configuration) -> Result<()> {
+        Profiler::execute_profile(self.target.as_deref(), self.input.as_deref(), config)
     }
 }
 

@@ -1,3 +1,4 @@
+use crate::utils::paths::PathUtilities;
 use crate::utils::ui::Ui;
 use anyhow::{Context, Result};
 use colored::Colorize;
@@ -100,6 +101,115 @@ impl Compiler {
     const OPTIMISED_MAXIMUM: &str = "-O3";
     const OPTIMISED_BREAKING: [&str; 2] = ["-O3", "-ffast-math"];
 
+    pub fn execute_build(
+        file: &Path,
+        cli_includes: &[String],
+        std_override: Option<u32>,
+        mode_override: Option<&str>,
+        config: &crate::config::settings::Configuration,
+    ) -> Result<()> {
+        let std_version = std_override.unwrap_or(config.build.std);
+        let directories = PathUtilities::get_include_dirs(cli_includes, config, file);
+
+        Self::print_metadata("Release Build", file, &config.build.compiler, std_version);
+
+        let mode = mode_override.unwrap_or_default().to_lowercase();
+
+        let args = BuildArguments::new()
+            .file(file)
+            .debug(false)
+            .includes(&directories)
+            .cmd(config.build.compiler.clone())
+            .std(std_version)
+            .log(config.build.log_file)
+            .mode(mode);
+
+        Self::build(args).map(|_| ())
+    }
+
+    pub fn execute_debug(
+        file: &Path,
+        cli_includes: &[String],
+        std_override: Option<u32>,
+        config: &crate::config::settings::Configuration,
+    ) -> Result<()> {
+        let std_version = std_override.unwrap_or(config.build.std);
+        let directories = PathUtilities::get_include_dirs(cli_includes, config, file);
+        static EMPTY: &str = "";
+
+        Self::print_metadata("Debug Build", file, &config.build.compiler, std_version);
+
+        let args = BuildArguments::new()
+            .file(file)
+            .debug(true)
+            .includes(&directories)
+            .cmd(config.build.compiler.clone())
+            .std(std_version)
+            .log(config.build.log_file)
+            .mode(EMPTY);
+
+        Self::build(args).map(|_| ())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn execute_peek(
+        file: &Path,
+        out: Option<&Path>,
+        debug: bool,
+        reduced: bool,
+        cli_includes: &[String],
+        std_override: Option<u32>,
+        mode_override: Option<&str>,
+        config: &crate::config::settings::Configuration,
+    ) -> Result<()> {
+        if Self::is_assembly(file) {
+            anyhow::bail!("Cannot peek assembly output of a pure assembly file.");
+        }
+
+        let std_version = std_override.unwrap_or(config.build.std);
+        let directories = PathUtilities::get_include_dirs(cli_includes, config, file);
+
+        Ui::section("Assembly Peek");
+        Ui::meta("source", file.display());
+
+        let compiler = if reduced {
+            Self::cross_compiler(&config.build.compiler)
+        } else {
+            config.build.compiler.clone()
+        };
+
+        Ui::meta("compiler", &compiler);
+        Ui::meta("std", format!("C++{}", std_version));
+
+        let mode = mode_override.unwrap_or_default().to_lowercase();
+
+        let args = BuildArguments::new()
+            .file(file)
+            .debug(debug)
+            .includes(&directories)
+            .cmd(compiler.clone())
+            .std(std_version)
+            .log(config.build.log_file)
+            .mode(mode);
+
+        Self::peek(args, out).map(|_| ())
+    }
+
+    fn print_metadata(section: &str, file: &Path, compiler: &str, std_version: u32) {
+        Ui::section(section);
+        Ui::meta("source", file.display());
+        Ui::meta("compiler", compiler);
+
+        if Self::is_assembly(file) {
+            let arch = Self::target_architecture(compiler)
+                .map(|a| Self::format_arch(&a))
+                .unwrap_or_else(|_| "Unknown".to_string());
+            Ui::meta("type", format!("{} ASM", arch));
+        } else {
+            Ui::meta("std", format!("C++{}", std_version));
+        }
+    }
+
     pub fn is_assembly(file: &Path) -> bool {
         file.extension()
             .and_then(|ext| ext.to_str())
@@ -126,8 +236,6 @@ impl Compiler {
             anyhow::bail!("Compiler returned empty target triple");
         }
 
-        // Target triples follow the pattern `<arch>-<vendor>-<os>-<env>` (or subset)
-        // Taking the first segment robustly isolates the target architecture.
         let arch = triple.split('-').next().unwrap_or(triple);
         Ok(arch.to_string())
     }
@@ -249,6 +357,7 @@ impl Compiler {
 
     pub fn peek(args: BuildArguments, out: Option<&Path>) -> Result<PathBuf> {
         Self::validate_target(&args.file)?;
+        let cache_directory = Self::setup_cache(&args.file)?;
 
         if Self::is_assembly(&args.file) {
             anyhow::bail!("Cannot peek assembly output of a pure assembly file.");
@@ -259,7 +368,7 @@ impl Compiler {
             None => args.file.with_extension("s"),
         };
 
-        let mut command = Self::create_base(&args, true)?;
+        let mut command = Self::create_base(&args, !args.log_file)?;
 
         println!();
         command
@@ -268,7 +377,15 @@ impl Compiler {
             .arg("-o")
             .arg(&output_file);
 
-        Self::execute_command(&mut command, &args.compiler_cmd)?;
+        if args.log_file {
+            let target = args.file.file_stem().unwrap_or_default();
+            let mut error_file = cache_directory.join(target);
+            error_file.set_extension("errors");
+            Self::logged_execution(&mut command, &args.compiler_cmd, &error_file)?;
+        } else {
+            Self::standard_execution(&mut command, &args.compiler_cmd)?;
+        }
+
         Ui::ok(format!(
             "assembly output written to {}",
             output_file.display()

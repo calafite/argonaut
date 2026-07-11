@@ -9,6 +9,12 @@ use tiny_http::{Method, Response, Server};
 pub struct ProblemListener;
 
 impl ProblemListener {
+    pub fn execute_listen(port: u16, short_override: bool, config: &Configuration) -> Result<()> {
+        Ui::section("Problem Parser Server");
+        let use_short = short_override || config.scaffold.short_name;
+        Self::start(port, use_short, config)
+    }
+
     pub fn start(port: u16, use_short: bool, config: &Configuration) -> Result<()> {
         let server = Server::http(format!("127.0.0.1:{}", port)).map_err(|e| {
             anyhow::anyhow!("Failed to start HTTP listener on port {}: {}", port, e)
@@ -164,20 +170,22 @@ impl ProblemListener {
             let problem_id = get_after("problem", 1);
 
             if let Some(contest) = contest_id
-                && let Some(problem) = problem_id {
-                    let combined = format!("{}{}", contest, problem);
-                    return Some(combined.to_uppercase());
-                }
+                && let Some(problem) = problem_id
+            {
+                let combined = format!("{}{}", contest, problem);
+                return Some(combined.to_uppercase());
+            }
 
             if parts.contains(&"problemset") {
                 let problem_group = get_after("problem", 1);
                 let problem_letter = get_after("problem", 2);
 
                 if let Some(group) = problem_group
-                    && let Some(letter) = problem_letter {
-                        let combined = format!("{}{}", group, letter);
-                        return Some(combined.to_uppercase());
-                    }
+                    && let Some(letter) = problem_letter
+                {
+                    let combined = format!("{}{}", group, letter);
+                    return Some(combined.to_uppercase());
+                }
             }
         }
 

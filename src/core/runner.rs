@@ -119,8 +119,13 @@ impl Runner {
         let cpu_nanos = Self::children_nanos().saturating_sub(start_ns);
         let exec_time = if use_file { wall_nanos } else { cpu_nanos };
 
-        let _ = stdout_thread.join();
-        let _ = stderr_thread.join();
+        if stdout_thread.join().is_err() {
+            Ui::fail("stdout thread panicked on join.")
+        };
+
+        if stderr_thread.join().is_err() {
+            Ui::fail("stderr thread panicked on join.");
+        };
 
         println!();
 

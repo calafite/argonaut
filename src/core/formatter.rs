@@ -9,6 +9,11 @@ use std::process::{Command, Stdio};
 pub struct Formatter;
 
 impl Formatter {
+    pub fn execute_format(file: &Path) -> Result<()> {
+        Ui::section("Code Formatter");
+        Self::format(file)
+    }
+
     pub fn format(file: &Path) -> Result<()> {
         let (absolute_file, source) = Self::prepare(file)?;
         let file_name = absolute_file

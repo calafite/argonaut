@@ -10,6 +10,11 @@ pub struct Scaffold;
 impl Scaffold {
     const EMPTY: &str = "";
 
+    pub fn execute_new(name: &str, config: &Configuration) -> Result<()> {
+        Ui::section("Project Scaffold");
+        Self::create(name, config)
+    }
+
     pub fn create(name: &str, config: &Configuration) -> Result<()> {
         let target = Self::prepare_target(name)?;
         let template = Self::get_template(config);

@@ -9,6 +9,18 @@ use std::path::{Path, PathBuf};
 pub struct Tester;
 
 impl Tester {
+    pub fn execute_test(target: Option<&str>, force_input: bool, no_input: bool) -> Result<()> {
+        let (binary, display) = crate::core::compiler::Compiler::resolve_test_target(target)?;
+        Ui::section("Running Tests");
+        Ui::meta("target", display);
+        let tests_run = Self::run_suite(&binary)?;
+        if tests_run > 0 {
+            return Ok(());
+        }
+        let use_file = Runner::resolve_input(&binary, force_input, no_input)?;
+        Runner::run(&binary, use_file)
+    }
+
     pub fn save_tests(problem_name: &str, tests: &[TestCase]) -> Result<()> {
         let test_directory = PathBuf::from(problem_name)
             .join(".argo")
