@@ -15,7 +15,7 @@ use crate::utils::{paths::PathUtilities, ui::Ui};
 
 #[derive(Parser)]
 #[command(name = "argo")]
-#[command(version = "1.0.0")]
+#[command(version = "0.5.0")]
 #[command(about = "Competitive Programming Toolkit", long_about = None)]
 #[command(styles = styles())]
 pub struct Cli {
