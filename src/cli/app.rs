@@ -5,8 +5,12 @@ use std::path::{Path, PathBuf};
 
 use crate::bundler::Bundler;
 use crate::config::settings::Configuration;
-use crate::core::compiler::BuildArguments;
-use crate::core::{compiler::Compiler, formatter::Formatter, runner::Runner, scaffold::Scaffold};
+use crate::core::compiler::{BuildArguments, Compiler};
+use crate::core::formatter::Formatter;
+use crate::core::runner::Runner;
+use crate::core::scaffold::Scaffold;
+use crate::core::tester::Tester;
+use crate::parser::server::ProblemListener;
 use crate::utils::{paths::PathUtilities, ui::Ui};
 
 #[derive(Parser)]
@@ -31,6 +35,7 @@ impl Cli {
             Commands::Bundle(args) => args.execute(&config),
             Commands::Format(args) => args.execute(),
             Commands::Peek(args) => args.execute(&config),
+            Commands::Listen(args) => args.execute(&config),
         }
     }
 }
@@ -51,6 +56,8 @@ pub enum Commands {
     Format(FormatArgs),
     /// Output the intermediate assembly generated in the build
     Peek(PeekArgs),
+    /// Listen for Competitive Companion problem payloads
+    Listen(ListenArgs),
 }
 
 #[derive(Args)]
@@ -139,10 +146,13 @@ pub struct TestArgs {
 impl TestArgs {
     pub fn execute(self) -> Result<()> {
         let (binary, display) = Compiler::resolve_test_target(self.target.as_deref())?;
-        let use_file = Runner::resolve_input(&binary, self.input, self.no_input)?;
-
         Ui::section("Running Tests");
         Ui::meta("target", display);
+        let tests_run = Tester::run_suite(&binary)?;
+        if tests_run > 0 {
+            return Ok(());
+        }
+        let use_file = Runner::resolve_input(&binary, self.input, self.no_input)?;
         Runner::run(&binary, use_file)
     }
 }
@@ -269,6 +279,24 @@ impl PeekArgs {
             .mode(mode);
 
         Compiler::peek(args, self.out.as_deref()).map(|_| ())
+    }
+}
+
+#[derive(Args)]
+pub struct ListenArgs {
+    /// Port to listen on for Competitive Companion payloads
+    #[arg(short, long, default_value_t = 10045)]
+    pub port: u16,
+    /// Whether to use short codes as problem names when scaffolding.
+    #[arg(short, long)]
+    pub short: bool,
+}
+
+impl ListenArgs {
+    pub fn execute(self, config: &Configuration) -> Result<()> {
+        Ui::section("Problem Parser Server");
+        let use_short = self.short || config.scaffold.short_name;
+        ProblemListener::start(self.port, use_short, config)
     }
 }
 

@@ -6,7 +6,7 @@ use std::{fs, path::PathBuf};
 
 const CONFIG_FILE: &str = "Config.toml";
 
-#[derive(Deserialize, Default, Debug)]
+#[derive(Deserialize, Default, Debug, Clone)]
 pub struct Configuration {
     #[serde(default)]
     pub scaffold: ScaffoldConfig,
@@ -14,12 +14,13 @@ pub struct Configuration {
     pub build: BuildConfig,
 }
 
-#[derive(Deserialize, Default, Debug)]
+#[derive(Deserialize, Default, Debug, Clone)]
 pub struct ScaffoldConfig {
     pub template_path: Option<String>,
+    pub short_name: bool,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct BuildConfig {
     #[serde(default)]
     pub include_dirs: Vec<String>,

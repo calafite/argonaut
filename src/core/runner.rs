@@ -16,6 +16,7 @@ use std::time::Instant;
 pub struct RunnerFlags {
     pub bt_limit: usize,
     pub io_buf_size: usize,
+    pub memory_limit_mb: Option<usize>,
 }
 
 impl Default for RunnerFlags {
@@ -23,8 +24,16 @@ impl Default for RunnerFlags {
         Self {
             bt_limit: 30,
             io_buf_size: 8224,
+            memory_limit_mb: None,
         }
     }
+}
+
+pub struct ExecutionResult {
+    pub status: std::process::ExitStatus,
+    pub stdout: String,
+    pub stderr: String,
+    pub time_nanos: u128,
 }
 
 struct PythonTraceFrame {
@@ -85,7 +94,7 @@ impl Runner {
 
     fn with_flags(binary: &Path, use_file: bool, flags: RunnerFlags) -> Result<()> {
         let input_file = Self::input_file(binary);
-        let mut child_command = Self::child_command(binary, use_file, &input_file)?;
+        let mut child_command = Self::child_command(binary, use_file, &input_file, flags)?;
 
         println!();
 
@@ -118,16 +127,62 @@ impl Runner {
         Self::handle_exit(binary, use_file, status, exec_time, flags)
     }
 
-    fn child_command(binary: &Path, use_file: bool, input_file: &Path) -> Result<Command> {
+    pub fn execute_captured(
+        binary: &Path,
+        input_file: &Path,
+        flags: RunnerFlags,
+    ) -> Result<ExecutionResult> {
+        let mut child_command = Self::child_command(binary, true, input_file, flags)?;
+
+        #[cfg(unix)]
+        let start_ns = Self::children_nanos();
+        let start = Instant::now();
+
+        let output = child_command.output()?;
+        let wall_nanos = start.elapsed().as_nanos();
+
+        #[cfg(unix)]
+        let cpu_nanos = Self::children_nanos().saturating_sub(start_ns);
+
+        #[cfg(unix)]
+        let exec_time = if cpu_nanos > 0 { cpu_nanos } else { wall_nanos };
+
+        Ok(ExecutionResult {
+            status: output.status,
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            time_nanos: exec_time,
+        })
+    }
+
+    fn child_command(
+        binary: &Path,
+        use_file: bool,
+        input_file: &Path,
+        flags: RunnerFlags,
+    ) -> Result<Command> {
         let mut child_command = Command::new(binary);
 
-        #[cfg(target_os = "linux")]
+        child_command.env("OMP_NUM_THREADS", "1");
+        child_command.env("MKL_NUM_THREADS", "1");
+        child_command.env("OPENBLAS_NUM_THREADS", "1");
+        child_command.env("VECLIB_MAXIMUM_THREADS", "1");
+        child_command.env("NUMEXPR_NUM_THREADS", "1");
+
+        #[cfg(unix)]
         {
             unsafe {
-                let closure = || {
-                    let kind = std::io::ErrorKind::PermissionDenied;
-                    crate::core::sandbox::apply_sandbox()
-                        .map_err(|error| std::io::Error::new(kind, error))
+                let memory_limit = flags.memory_limit_mb;
+                let closure = move || {
+                    #[cfg(target_os = "linux")]
+                    {
+                        if let Err(e) = crate::core::sandbox::apply_sandbox() {
+                            let kind = std::io::ErrorKind::PermissionDenied;
+                            return Err(std::io::Error::new(kind, e));
+                        }
+                    }
+                    Self::apply_limits(memory_limit)?;
+                    Ok(())
                 };
                 child_command.pre_exec(closure);
             }
@@ -148,6 +203,37 @@ impl Runner {
         child_command.stdout(Stdio::piped());
         child_command.stderr(Stdio::piped());
         Ok(child_command)
+    }
+
+    #[cfg(unix)]
+    fn apply_limits(memory_limit_mb: Option<usize>) -> Result<(), std::io::Error> {
+        // limit memory allocation
+        if let Some(limit_mb) = memory_limit_mb {
+            let limit_bytes = (limit_mb as u64) * 1024 * 1024;
+            let rlim = libc::rlimit {
+                rlim_cur: limit_bytes,
+                rlim_max: limit_bytes,
+            };
+            unsafe {
+                if libc::setrlimit(libc::RLIMIT_AS, &rlim) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+            }
+        }
+
+        // limits execution to one core
+        #[cfg(target_os = "linux")]
+        unsafe {
+            let mut set: libc::cpu_set_t = std::mem::zeroed();
+            libc::CPU_SET(0, &mut set);
+
+            let ret = libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set);
+            if ret != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+        }
+
+        Ok(())
     }
 
     fn handle_exit(
@@ -191,7 +277,6 @@ impl Runner {
     fn write_tracer(argo_directory: &Path) -> Result<PathBuf> {
         std::fs::create_dir_all(argo_directory)?;
         let tracer_path = argo_directory.join("tracer.py");
-        // Fixed Bug B: Added ? error propagation
         std::fs::write(&tracer_path, include_str!("tracer.py"))?;
         Ok(tracer_path)
     }
