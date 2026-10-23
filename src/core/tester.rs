@@ -1,10 +1,12 @@
 use crate::core::runner::{Runner, RunnerFlags};
 use crate::parser::payload::TestCase;
+use crate::utils::paths::ProjectLayout;
 use crate::utils::ui::Ui;
 use anyhow::{Context, Result};
 use colored::Colorize;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::fs::{self, File};
+use std::io::{BufRead, BufReader};
+use std::path::Path;
 
 pub struct Tester;
 
@@ -22,10 +24,9 @@ impl Tester {
     }
 
     pub fn save_tests(problem_name: &str, tests: &[TestCase]) -> Result<()> {
-        let test_directory = PathBuf::from(problem_name)
-            .join(".argo")
-            .join("tests")
-            .join(problem_name);
+        let layout = ProjectLayout::new(problem_name);
+        let test_directory = layout.tests_dir(problem_name);
+
         let closure = || {
             format!(
                 "Failed to create test directory layout: {}",
@@ -50,11 +51,8 @@ impl Tester {
 
     pub fn run_suite(binary: &Path) -> Result<usize> {
         let stem = binary.file_stem().unwrap_or_default().to_string_lossy();
-        let test_directory = binary
-            .parent()
-            .unwrap_or_else(|| Path::new(".argo"))
-            .join("tests")
-            .join(stem.as_ref());
+        let layout = ProjectLayout::from_binary(binary);
+        let test_directory = layout.tests_dir(&stem);
 
         if !test_directory.exists() || !test_directory.is_dir() {
             return Ok(0);
@@ -63,7 +61,7 @@ impl Tester {
         let mut test_cases = Vec::new();
         if let Ok(entries) = fs::read_dir(&test_directory) {
             for entry in entries.flatten() {
-                let name = entry.file_name().to_string_lossy().to_string();
+                let name = entry.file_name().to_string_lossy().into_owned();
                 if name.starts_with("in_") && name.ends_with(".txt") {
                     let id = name
                         .trim_start_matches("in_")
@@ -132,17 +130,17 @@ impl Tester {
 
     fn find_memory_limit(binary: &Path) -> Option<usize> {
         let stem = binary.file_stem()?.to_string_lossy();
-
-        let argo_dir = binary.parent()?;
-        let source_dir = argo_dir.parent()?;
-        let source_file = source_dir.join(format!("{}.cpp", stem));
+        let layout = ProjectLayout::from_binary(binary);
+        let source_file = layout.source_file(&stem);
 
         if !source_file.exists() {
             return None;
         }
 
-        let content = fs::read_to_string(source_file).ok()?;
-        for line in content.lines() {
+        let file = File::open(source_file).ok()?;
+        let reader = BufReader::new(file);
+
+        for line in reader.lines().map_while(Result::ok) {
             if line.contains("Memory Limit:") {
                 let parts: Vec<&str> = line.split("Memory Limit:").collect();
                 if let Some(limit_part) = parts.get(1) {

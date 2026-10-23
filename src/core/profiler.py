@@ -201,7 +201,7 @@ def run_perf_sampling(binary, input_files):
             if res and res.returncode == 0:
                 first = False
 
-        if first:  
+        if first:
             print(
                 "@@ARGO_ERR@@perf record failed. Hotspot sampling is restricted on this environment."
             )

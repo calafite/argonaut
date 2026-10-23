@@ -1,4 +1,4 @@
-use crate::utils::paths::PathUtilities;
+use crate::utils::paths::{PathUtilities, ProjectLayout};
 use crate::utils::ui::Ui;
 use anyhow::{Context, Result};
 use colored::Colorize;
@@ -84,8 +84,6 @@ impl BuildArguments {
 }
 
 impl Compiler {
-    const CACHE_DIR: &'static str = ".argo";
-
     const WARNING_FLAGS: [&str; 4] = ["-Wall", "-Wextra", "-Wshadow", "-DLOCAL"];
     const SANITIZER_FLAGS: [&str; 2] = ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"];
     const SANITIZER_PROBE_FLAGS: [&str; 6] = [
@@ -254,8 +252,8 @@ impl Compiler {
     }
 
     fn setup_cache(file: &Path) -> Result<PathBuf> {
-        let parent = Self::parent_or_default(file);
-        let directory = parent.join(Self::CACHE_DIR);
+        let layout = ProjectLayout::from_source_file(file);
+        let directory = layout.cache_dir();
         if !directory.exists() {
             match Self::create_directory(&directory) {
                 Ok(()) => {}
@@ -266,12 +264,9 @@ impl Compiler {
     }
 
     pub fn binary_path(file: &Path) -> PathBuf {
-        let parent = Self::parent_or_default(file);
-        let cache_dir = parent.join(Self::CACHE_DIR);
-        let file_stem = file.file_stem().unwrap_or_default();
-        let mut out_bin = cache_dir.join(file_stem);
-        out_bin.set_extension("out");
-        out_bin
+        let layout = ProjectLayout::from_source_file(file);
+        let file_stem = file.file_stem().unwrap_or_default().to_string_lossy();
+        layout.binary(&file_stem)
     }
 
     pub fn cross_compiler(base_compiler: &str) -> String {
@@ -283,7 +278,7 @@ impl Compiler {
             for directory in std::env::split_paths(&path) {
                 if let Ok(entries) = fs::read_dir(directory) {
                     for entry in entries.flatten() {
-                        let name = entry.file_name().to_string_lossy().to_string();
+                        let name = entry.file_name().to_string_lossy().into_owned();
 
                         let is_riscv = name.starts_with("riscv64-") || name.starts_with("riscv32-");
                         let is_cpp = name.ends_with("-g++") || name.ends_with("-c++");
@@ -336,7 +331,7 @@ impl Compiler {
 
     pub fn build(args: BuildArguments) -> Result<PathBuf> {
         Self::validate_target(&args.file)?;
-        let cache_directory = Self::setup_cache(&args.file)?;
+        let _cache_directory = Self::setup_cache(&args.file)?;
         let out_binary = Self::binary_path(&args.file);
 
         let mut command = Self::create_base(&args, !args.log_file)?;
@@ -345,9 +340,9 @@ impl Compiler {
         command.arg(&args.file).arg("-o").arg(&out_binary);
 
         if args.log_file {
-            let target = args.file.file_stem().unwrap_or_default();
-            let mut error_file = cache_directory.join(target);
-            error_file.set_extension("errors");
+            let layout = ProjectLayout::from_source_file(&args.file);
+            let target = args.file.file_stem().unwrap_or_default().to_string_lossy();
+            let error_file = layout.error_log(&target);
             Self::logged_execution(&mut command, &args.compiler_cmd, &error_file)?;
         } else {
             Self::standard_execution(&mut command, &args.compiler_cmd)?;
@@ -357,7 +352,7 @@ impl Compiler {
 
     pub fn peek(args: BuildArguments, out: Option<&Path>) -> Result<PathBuf> {
         Self::validate_target(&args.file)?;
-        let cache_directory = Self::setup_cache(&args.file)?;
+        let _cache_directory = Self::setup_cache(&args.file)?;
 
         if Self::is_assembly(&args.file) {
             anyhow::bail!("Cannot peek assembly output of a pure assembly file.");
@@ -378,9 +373,9 @@ impl Compiler {
             .arg(&output_file);
 
         if args.log_file {
-            let target = args.file.file_stem().unwrap_or_default();
-            let mut error_file = cache_directory.join(target);
-            error_file.set_extension("errors");
+            let layout = ProjectLayout::from_source_file(&args.file);
+            let target = args.file.file_stem().unwrap_or_default().to_string_lossy();
+            let error_file = layout.error_log(&target);
             Self::logged_execution(&mut command, &args.compiler_cmd, &error_file)?;
         } else {
             Self::standard_execution(&mut command, &args.compiler_cmd)?;
@@ -451,13 +446,6 @@ impl Compiler {
         }
 
         Ok(())
-    }
-
-    fn parent_or_default(file: &Path) -> &Path {
-        match file.parent() {
-            Some(parent) => parent,
-            None => Path::new("."),
-        }
     }
 
     fn sanitizer_probe(compiler_cmd: &str) -> Result<Command> {
@@ -658,7 +646,6 @@ struct MatchCandidate {
 struct FuzzyMatching;
 
 impl FuzzyMatching {
-    const CACHE_DIR: &'static str = ".argo";
     const JARO_WRINKLER_THRESHOLD: f64 = 0.65;
     const UPPER_JARO_WRINKLER_THRESHOLD: f64 = 0.72;
     const RUNNER_UP_DISAMBIGUATION: f64 = 0.05;
@@ -668,7 +655,9 @@ impl FuzzyMatching {
         let mut candidates: Vec<MatchCandidate> = Vec::new();
 
         let mut check_directory = |directory: &Path| -> Result<()> {
-            let argo_directory = directory.join(Self::CACHE_DIR);
+            let layout = ProjectLayout::new(directory);
+            let argo_directory = layout.cache_dir();
+
             if argo_directory.exists() && argo_directory.is_dir() {
                 let entries = fs::read_dir(&argo_directory).map_err(|_| {
                     let error_string =
@@ -686,7 +675,7 @@ impl FuzzyMatching {
                             .file_stem()
                             .unwrap_or_default()
                             .to_string_lossy()
-                            .to_string();
+                            .into_owned();
                         candidates.push(MatchCandidate { mtime, path, stem });
                     }
                 }
@@ -697,7 +686,7 @@ impl FuzzyMatching {
         check_directory(&current_directory)?;
         if let Ok(entries) = fs::read_dir(&current_directory) {
             for entry in entries.flatten() {
-                if entry.path().is_dir() && entry.file_name() != Self::CACHE_DIR {
+                if entry.path().is_dir() && entry.file_name() != ".argo" {
                     check_directory(&entry.path())?;
                 }
             }

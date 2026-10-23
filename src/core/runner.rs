@@ -1,4 +1,4 @@
-use crate::utils::paths::PathUtilities;
+use crate::utils::paths::ProjectLayout;
 use crate::utils::ui::Ui;
 use anyhow::Result;
 use colored::Colorize;
@@ -60,8 +60,7 @@ pub struct Runner;
 
 impl Runner {
     fn input_file(binary: &Path) -> PathBuf {
-        let parent = PathUtilities::parent_or_default(binary);
-        parent.join("input.txt")
+        ProjectLayout::from_binary(binary).default_input()
     }
 
     pub fn resolve_input(binary: &Path, force_input: bool, no_input: bool) -> Result<bool> {
@@ -226,7 +225,6 @@ impl Runner {
             }
         }
 
-        // limits execution to one core
         #[cfg(target_os = "linux")]
         unsafe {
             let mut set: libc::cpu_set_t = std::mem::zeroed();
@@ -279,22 +277,23 @@ impl Runner {
         Err(anyhow::anyhow!("process exited with {}", status))
     }
 
-    fn write_tracer(argo_directory: &Path) -> Result<PathBuf> {
-        std::fs::create_dir_all(argo_directory)?;
-        let tracer_path = argo_directory.join("tracer.py");
+    fn write_tracer(binary: &Path) -> Result<PathBuf> {
+        let layout = ProjectLayout::from_binary(binary);
+        let cache_dir = layout.cache_dir();
+        std::fs::create_dir_all(&cache_dir)?;
+        let tracer_path = layout.tracer_script();
         std::fs::write(&tracer_path, include_str!("tracer.py"))?;
         Ok(tracer_path)
     }
 
     fn print_trace(binary: &Path, use_file: bool, bt_limit: usize) {
         let input_redirect = if use_file {
-            Self::input_file(binary).to_string_lossy().to_string()
+            Self::input_file(binary).to_string_lossy().into_owned()
         } else {
             "/dev/null".to_string()
         };
 
-        let argo_directory = PathUtilities::parent_or_default(binary);
-        let tracer_path = match Self::write_tracer(argo_directory) {
+        let tracer_path = match Self::write_tracer(binary) {
             Ok(path) => path,
             Err(_) => {
                 Ui::warn("Could not write Python tracer. Falling back to CLI parsing...");
@@ -387,7 +386,7 @@ impl Runner {
                     .file_name()
                     .unwrap_or_default()
                     .to_string_lossy()
-                    .to_string()
+                    .into_owned()
             } else {
                 frame.file.clone()
             };

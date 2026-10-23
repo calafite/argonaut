@@ -1,5 +1,5 @@
 use crate::core::compiler::Compiler;
-use crate::utils::paths::PathUtilities;
+use crate::utils::paths::ProjectLayout;
 use crate::utils::ui::Ui;
 use anyhow::Result;
 use colored::Colorize;
@@ -19,12 +19,12 @@ impl Profiler {
         Ui::section("Profiler Configuration");
         Ui::meta("target", display);
 
-        let argo_dir = PathUtilities::parent_or_default(&binary).to_path_buf();
-        let project_dir = argo_dir.parent().unwrap_or_else(|| Path::new("."));
         let stem = binary.file_stem().unwrap_or_default().to_string_lossy();
-        let source_file = project_dir.join(format!("{}.cpp", stem));
+        let layout = ProjectLayout::from_binary(&binary);
 
-        let test_directory = argo_dir.join("tests").join(stem.as_ref());
+        let source_file = layout.source_file(&stem);
+        let test_directory = layout.tests_dir(&stem);
+
         let mut input_path = None;
 
         if let Some(ui) = input_override {
@@ -32,20 +32,18 @@ impl Profiler {
             if path_buf.exists() {
                 input_path = Some(path_buf);
             }
+        } else if test_directory.exists() && test_directory.is_dir() {
+            input_path = Some(test_directory);
         } else {
-            if test_directory.exists() && test_directory.is_dir() {
-                input_path = Some(test_directory);
-            } else {
-                let default_in = project_dir.join("input.txt");
-                if default_in.exists() {
-                    input_path = Some(default_in);
-                }
+            let default_in = layout.default_input();
+            if default_in.exists() {
+                input_path = Some(default_in);
             }
         }
 
         let mut asm_file = None;
-        let local_asm = project_dir.join(format!("{}.s", stem));
-        let cached_asm = argo_dir.join(format!("{}.s", stem));
+        let local_asm = layout.assembly_local(&stem);
+        let cached_asm = layout.assembly_cached(&stem);
 
         if local_asm.exists() {
             asm_file = Some(local_asm);
@@ -80,13 +78,14 @@ impl Profiler {
         source: Option<&Path>,
         compiler: Option<&Path>,
     ) -> Result<()> {
-        let argo_dir = PathUtilities::parent_or_default(binary);
-        let profiler_path = argo_dir.join("profiler.py");
+        let layout = ProjectLayout::from_binary(binary);
+        let profiler_path = layout.profiler_script();
 
         std::fs::write(&profiler_path, include_str!("profiler.py"))
             .map_err(|e| anyhow::anyhow!("Failed to write profiler script: {}", e))?;
 
-        let mut cmd = Command::new("python3");
+        let python_cmd = if cfg!(windows) { "python" } else { "python3" };
+        let mut cmd = Command::new(python_cmd);
         cmd.arg(&profiler_path).arg(binary);
 
         if let Some(i) = input {

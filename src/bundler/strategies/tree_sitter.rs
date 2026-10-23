@@ -357,6 +357,15 @@ impl BundleUtilities {
                 }
                 let mut cursor = node.walk();
                 for child in node.children(&mut cursor) {
+                    if matches!(
+                        child.kind(),
+                        "class_specifier"
+                            | "struct_specifier"
+                            | "enum_specifier"
+                            | "union_specifier"
+                    ) {
+                        symbols.extend(Self::declared_symbols(child, source));
+                    }
                     if let Some(identifier) = Self::extract_core(child, source) {
                         symbols.push(identifier);
                     }

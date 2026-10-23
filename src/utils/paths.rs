@@ -3,6 +3,75 @@ use anyhow::Result;
 use directories::{BaseDirs, ProjectDirs};
 use std::path::{Path, PathBuf};
 
+pub struct ProjectLayout {
+    pub root: PathBuf,
+}
+
+impl ProjectLayout {
+    const CACHE_DIR: &'static str = ".argo";
+
+    pub fn new<P: Into<PathBuf>>(root: P) -> Self {
+        Self { root: root.into() }
+    }
+
+    pub fn from_source_file(file: &Path) -> Self {
+        let root = file.parent().unwrap_or_else(|| Path::new("."));
+        Self::new(root)
+    }
+
+    pub fn from_binary(binary: &Path) -> Self {
+        let root = binary
+            .parent()
+            .and_then(|path| path.parent())
+            .unwrap_or_else(|| Path::new("."));
+        Self::new(root)
+    }
+
+    pub fn root_dir(&self) -> &Path {
+        &self.root
+    }
+
+    pub fn cache_dir(&self) -> PathBuf {
+        self.root.join(Self::CACHE_DIR)
+    }
+
+    pub fn source_file(&self, stem: &str) -> PathBuf {
+        self.root.join(format!("{}.cpp", stem))
+    }
+
+    pub fn binary(&self, stem: &str) -> PathBuf {
+        self.cache_dir().join(format!("{}.out", stem))
+    }
+
+    pub fn assembly_local(&self, stem: &str) -> PathBuf {
+        self.root.join(format!("{}.s", stem))
+    }
+
+    pub fn assembly_cached(&self, stem: &str) -> PathBuf {
+        self.cache_dir().join(format!("{}.s", stem))
+    }
+
+    pub fn tests_dir(&self, stem: &str) -> PathBuf {
+        self.cache_dir().join("tests").join(stem)
+    }
+
+    pub fn default_input(&self) -> PathBuf {
+        self.root.join("input.txt")
+    }
+
+    pub fn error_log(&self, stem: &str) -> PathBuf {
+        self.cache_dir().join(format!("{}.errors", stem))
+    }
+
+    pub fn tracer_script(&self) -> PathBuf {
+        self.cache_dir().join("tracer.py")
+    }
+
+    pub fn profiler_script(&self) -> PathBuf {
+        self.cache_dir().join("profiler.py")
+    }
+}
+
 pub struct PathUtilities;
 
 impl PathUtilities {
@@ -33,6 +102,24 @@ impl PathUtilities {
 
         for inc in cli_includes {
             dirs.push(Self::expand_path(inc));
+        }
+
+        if let Ok(cpath) = std::env::var("CPATH") {
+            for path in std::env::split_paths(&cpath) {
+                dirs.push(Self::expand_path(&path.to_string_lossy()));
+            }
+        }
+
+        if let Ok(cplus) = std::env::var("CPLUS_INCLUDE_PATH") {
+            for path in std::env::split_paths(&cplus) {
+                dirs.push(Self::expand_path(&path.to_string_lossy()));
+            }
+        }
+
+        if let Ok(include_env) = std::env::var("INCLUDE") {
+            for path in std::env::split_paths(&include_env) {
+                dirs.push(Self::expand_path(&path.to_string_lossy()));
+            }
         }
 
         let abs_file = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
